@@ -1,0 +1,52 @@
+CHANGES IN v4.1.1 (2025-10-07)
+================================
+
+CRITICAL BUG FIXES:
+-------------------
+
+1. Fixed NameError: 'preloaded_ai' is not defined
+   - Removed preloaded_ai variable usage
+   - Now uses cached_ai_analysis from cache properly
+   
+2. Fixed AI analysis not showing up on first load
+   - AI analysis now properly displays when address correction is used
+   - Cache checking improved
+   
+3. Fixed AI analysis running when already cached
+   - Added proper cache checks before running AI analysis
+   - Prevents duplicate API calls and wasted time
+   
+4. Fixed AI analysis running for wrong person
+   - DISABLED preloading system (was causing race conditions)
+   - AI analysis now only runs for current person
+   
+5. Added mouse wheel scrolling to ALL windows
+   - Setup screen
+   - Standard View addresses list
+   - Settings panel
+   - AI Overview tab
+   - Call History window
+
+CACHE IMPROVEMENTS:
+-------------------
+- All API functions now check cache FIRST before making calls
+- AI analysis properly cached and retrieved
+- No duplicate AI analyses for same person
+- Faster navigation between people
+
+USER EXPERIENCE:
+----------------
+- Mouse wheel now works everywhere
+- Faster loading from cache
+- No more wrong person AI results
+- No more mysterious errors
+
+FILES MODIFIED:
+---------------
+- dialer_gui.py (multiple functions updated)
+
+LINES CHANGED:
+--------------
+- ~50 lines modified
+- ~25 lines added (mouse wheel bindings)
+- ~5 lines removed (preloading calls)

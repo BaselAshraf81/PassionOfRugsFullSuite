@@ -1569,6 +1569,9 @@ class DialerGUI:
         self.ai_results = None
         self.clear_ai_tab()
         
+        # Start preloading next person in background (with proper validation)
+        self.start_preloading_next_person()
+        
         # Update counter
         self.person_counter_label.config(text=f"Person {index + 1} of {len(self.original_data)}")
         
@@ -1636,15 +1639,21 @@ class DialerGUI:
                                     break
                         
                         if has_results:
-                            # Use cached AI analysis if available
-                            if cached_ai_analysis:
+                            # Priority: preloaded > cached > new analysis
+                            if preloaded_ai:
+                                # Use preloaded AI (from background preloading)
+                                self.ai_results = preloaded_ai
+                                self.show_ai_tab(self.ai_tab)
+                                self.update_status("Data loaded instantly (preloaded AI) - no wait time!", self.colors['success'])
+                            elif cached_ai_analysis:
+                                # Use cached AI analysis
                                 self.ai_results = cached_ai_analysis
                                 self.show_ai_tab(self.ai_tab)
                                 self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
                             elif phone_data or address_data:
-                                # Run new AI analysis in background only if not cached
+                                # Run new AI analysis in background only if not cached or preloaded
                                 threading.Thread(target=self._run_ai_analysis_background, 
-                                               args=(person, phone_data, address_data, original_phone), 
+                                               args=(person, phone_data, address_data, original_phone, index), 
                                                daemon=True).start()
                                 self.update_status("Data loaded from cache - running AI analysis...", self.colors['secondary'])
                     
@@ -1780,8 +1789,10 @@ class DialerGUI:
                         self.root.after(0, lambda: self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success']))
                     else:
                         # Run AI analysis in background only if not cached
+                        # Get person index from current_person_idx
+                        person_idx = self.current_person_idx
                         threading.Thread(target=self._run_ai_analysis_background, 
-                                       args=(person, phone_data, address_data, original_phone), 
+                                       args=(person, phone_data, address_data, original_phone, person_idx), 
                                        daemon=True).start()
             
             # Show appropriate status message
@@ -2125,7 +2136,7 @@ class DialerGUI:
         
         self.display_current_result()
     
-    def _run_ai_analysis_background(self, person, phone_data, address_data, original_phone):
+    def _run_ai_analysis_background(self, person, phone_data, address_data, original_phone, person_idx):
         """Run AI analysis in background thread and update cache"""
         try:
             ai_results = self.process_ai_analysis(person, phone_data, address_data)
@@ -2134,16 +2145,30 @@ class DialerGUI:
                 if self.lead_processor.cache_manager:
                     self.lead_processor.cache_manager.update_ai_analysis(original_phone, ai_results)
                 
-                # Update UI on main thread
-                self.root.after(0, lambda: self._update_ai_results(ai_results))
+                # Update UI on main thread ONLY if still viewing this person
+                self.root.after(0, lambda: self._update_ai_results(ai_results, original_phone, person_idx))
             else:
                 self.root.after(0, lambda: self.update_status("AI analysis completed", self.colors['success']))
         except Exception as e:
             logger.error(f"Background AI analysis error: {e}")
             self.root.after(0, lambda: self.update_status("AI analysis error", self.colors['danger']))
     
-    def _update_ai_results(self, ai_results):
-        """Update AI results on main thread"""
+    def _update_ai_results(self, ai_results, original_phone, person_idx):
+        """Update AI results on main thread - ONLY if still viewing this person"""
+        # Validate we're still on the same person
+        if self.current_person_idx != person_idx:
+            logger.info(f"Skipping AI update - user navigated away (was {person_idx}, now {self.current_person_idx})")
+            return
+        
+        # Double-check the phone number matches current person
+        if self.current_person_idx < len(self.original_data):
+            current_person = self.original_data[self.current_person_idx]
+            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+            if current_phone != original_phone:
+                logger.info(f"Skipping AI update - phone mismatch")
+                return
+        
+        # Safe to update UI
         self.ai_results = ai_results
         self.show_ai_tab(self.ai_tab)
         self.update_status("AI analysis complete", self.colors['success'])
@@ -2172,10 +2197,15 @@ class DialerGUI:
         ).pack()
     
     def start_preloading_next_person(self):
-        """Start preloading the next person's data in background - DISABLED to prevent wrong person AI analysis"""
-        # Preloading disabled - was causing AI analysis to run for wrong person
-        # and not properly checking cache before running analysis
-        pass
+        """Start preloading the next person's data in background with proper validation"""
+        next_idx = self.current_person_idx + 1
+        if next_idx < len(self.original_data):
+            # Start background thread to preload next person
+            threading.Thread(
+                target=self.preload_person_data,
+                args=(next_idx,),
+                daemon=True
+            ).start()
     
     def preload_person_data(self, person_idx):
         """Preload person data in background thread using existing cache-checking logic"""
@@ -2282,7 +2312,7 @@ class DialerGUI:
             logger.error(f"Preload person data error: {e}")
     
     def preload_ai_analysis(self, person, phone_data, address_data, original_phone):
-        """Preload AI analysis in background"""
+        """Preload AI analysis in background and store in both memory and permanent cache"""
         try:
             if not self.ai_assistant:
                 return
@@ -2299,11 +2329,16 @@ class DialerGUI:
             if has_results and (phone_data or address_data):
                 ai_results = self.process_ai_analysis(person, phone_data, address_data)
                 if ai_results:
-                    # Store preloaded AI results in cache or memory
+                    # Store in permanent cache first
+                    if self.lead_processor.cache_manager:
+                        self.lead_processor.cache_manager.update_ai_analysis(original_phone, ai_results)
+                        logger.info(f"Stored preloaded AI analysis in permanent cache for {person.get('name', 'Unknown')}")
+                    
+                    # Also store in memory for instant access
                     if not hasattr(self, 'preloaded_ai_results'):
                         self.preloaded_ai_results = {}
                     self.preloaded_ai_results[original_phone] = ai_results
-                    logger.info(f"Preloaded AI analysis for {person.get('name', 'Unknown')}")
+                    logger.info(f"Preloaded AI analysis in memory for {person.get('name', 'Unknown')}")
                     
         except Exception as e:
             logger.error(f"Preload AI analysis error: {e}")
@@ -2426,7 +2461,12 @@ class DialerGUI:
             print(f"Error saving to Excel: {e}")
     
     def display_current_result(self):
-        """Display current result"""
+        """Display current result - validates we're showing data for current person"""
+        # Validate we have a valid person index
+        if self.current_person_idx < 0 or self.current_person_idx >= len(self.original_data):
+            logger.warning(f"Invalid person index: {self.current_person_idx}")
+            return
+        
         if not self.current_results:
             self.result_counter_label.config(text="No results found")
             self.new_name_entry.config(state='normal')
@@ -3653,7 +3693,12 @@ class DialerGUI:
             return None
     
     def show_ai_tab(self, parent_frame):
-        """Create and populate AI Overview tab"""
+        """Create and populate AI Overview tab - validates AI results match current person"""
+        # Validate we have a valid person index
+        if self.current_person_idx < 0 or self.current_person_idx >= len(self.original_data):
+            logger.warning(f"Invalid person index in show_ai_tab: {self.current_person_idx}")
+            return
+        
         # Clear existing content
         for widget in parent_frame.winfo_children():
             widget.destroy()
@@ -3694,15 +3739,15 @@ class DialerGUI:
             ).pack(pady=10)
             return
         
-        # Check if we have AI results
+        # Validate AI results match current person
+        current_person = self.original_data[self.current_person_idx]
+        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        
+        # Check if AI results exist and validate they're for the current person
         if not self.ai_results:
             tk.Label(
                 scroll_frame,
-                text="No AI Analysis Available",
-                font=('Arial', 14, 'bold'),
-                bg='white',
-                fg='#999'
-            ).pack(pady=50)
+                text=dy=50)
             
             tk.Label(
                 scroll_frame,
