@@ -4131,7 +4131,7 @@ class DialerGUI:
         tk.Button(
             buttons_frame,
             text="Call via CloudTalk",
-            command=lambda p=phone, n=person_name: self.make_call(p, n),
+            command=lambda p=phone, n=person_name: self._call_from_ai(p, n),
             font=('Arial', 8, 'bold' if is_recommended else 'normal'),
             bg=call_bg,
             fg='white',
@@ -4358,33 +4358,21 @@ class DialerGUI:
         self.update_status(f"Copied: {text}", self.colors['success'])
     
     def _call_from_ai(self, phone, name):
-        """Make call from AI tab"""
-        if not self.cloudtalk_api or not self.agent_id:
-            messagebox.showwarning("CloudTalk Not Configured", 
-                                 "CloudTalk is not configured. Configure it in setup.")
+        """Make call from AI tab - uses main call_worker for consistency"""
+        if not phone or phone == "No phone found":
+            self.update_status("No phone number to call", self.colors['warning'])
             return
         
-        # Track for call history
-        self.last_called_phone = phone
-        self.last_called_name = name
+        if not self.cloudtalk_api or not self.agent_id:
+            self.copy_to_clipboard(phone)
+            self.update_status("CloudTalk not configured - phone number copied", self.colors['warning'])
+            return
         
-        # Make call in background
-        def call_worker():
-            result = self.cloudtalk_api.make_call(self.agent_id, phone)
-            self.root.after(0, lambda: self._handle_call_result(result, phone, name))
+        self.update_status(f"Calling {phone}...", self.colors['warning'])
+        self.root.update()
         
-        thread = threading.Thread(target=call_worker, daemon=True)
-        thread.start()
-        
-        self.update_status(f"Calling {phone}...", self.colors['secondary'])
-    
-    def _handle_call_result(self, result, phone, name):
-        """Handle call result from AI tab"""
-        if result['success']:
-            self.update_status(f"Call initiated to {phone}", self.colors['success'])
-        else:
-            self.update_status(f"Call failed: {result['message']}", self.colors['danger'])
-            messagebox.showerror("Call Failed", result['message'])
+        # Use the main call_worker which handles all call logic, history, and UI updates
+        threading.Thread(target=self.call_worker, args=(phone, name), daemon=True).start()
 
 
 def main():
