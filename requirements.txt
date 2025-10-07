@@ -1,0 +1,36 @@
+# Passion Of Rugs Advanced Dialer v4.1
+# Required Python packages
+
+# Core dependencies
+pandas>=2.0.0
+openpyxl>=3.1.0
+requests>=2.31.0
+
+# Standard library modules (included with Python)
+# tkinter - GUI framework (built-in)
+# json - JSON handling (built-in)
+# os - Operating system interface (built-in)
+# sys - System-specific parameters (built-in)
+# threading - Thread-based parallelism (built-in)
+# webbrowser - Web browser controller (built-in)
+# urllib.parse - URL parsing (built-in)
+# base64 - Base64 encoding/decoding (built-in)
+# re - Regular expressions (built-in)
+# time - Time-related functions (built-in)
+# datetime - Date and time handling (built-in)
+# logging - Logging facility (built-in)
+# pathlib - Object-oriented filesystem paths (built-in)
+
+# Type hints (Python 3.5+)
+# typing - Support for type hints (built-in)
+
+# Build tool
+pyinstaller>=6.0.0
+
+# Optional (for Visual View)
+tkinterweb>=3.0.0
+
+# AI features (OpenAI GPT-5 nano - cheapest option: $0.025/$0.20 per 1M tokens)
+openai>=1.0.0
+
+# Note: All standard library modules are included with Python installation

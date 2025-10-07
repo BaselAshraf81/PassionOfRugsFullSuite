@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrestleIQ Names & Numbers Extractor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .input-section {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .api-selector {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .api-selector label {
+            flex: 1;
+            cursor: pointer;
+        }
+
+        .api-selector input[type="radio"] {
+            display: none;
+        }
+
+        .api-selector .radio-label {
+            display: block;
+            padding: 15px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            text-align: center;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .api-selector input[type="radio"]:checked + .radio-label {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .results-section {
+            padding: 30px;
+            display: none;
+        }
+
+        .results-section.active {
+            display: block;
+        }
+
+        .person-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+
+        .person-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        .person-name {
+            font-size: 20px;
+            font-weight: 700;
+            color: #764ba2;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .address-section {
+            background: #e8eaf6;
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 3px solid #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .address-content {
+            flex: 1;
+        }
+
+        .address-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .address-text {
+            color: #333;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .phone-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .phone-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .phone-number {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .phone-type {
+            font-size: 12px;
+            color: #666;
+            background: #e8eaf6;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+
+        .copy-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
+        .copy-btn:hover {
+            background: #764ba2;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .copy-btn.copied {
+            background: #4caf50;
+        }
+
+        .copy-all-btn {
+            background: #764ba2;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+
+        .copy-all-btn:hover {
+            background: #667eea;
+        }
+
+        .summary {
+            background: #e8eaf6;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .summary-stats {
+            display: flex;
+            gap: 30px;
+            font-size: 14px;
+        }
+
+        .stat {
+            font-weight: 600;
+        }
+
+        .stat-value {
+            color: #667eea;
+            font-size: 18px;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #c62828;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .no-results-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>TrestleIQ Names & Numbers Extractor</h1>
+            <p>Extract all people names and phone numbers from phone or location lookups</p>
+        </div>
+
+        <div class="input-section">
+            <div class="api-selector">
+                <label>
+                    <input type="radio" name="api" value="phone" checked>
+                    <span class="radio-label">📞 Phone Lookup</span>
+                </label>
+                <label>
+                    <input type="radio" name="api" value="location">
+                    <span class="radio-label">📍 Location Lookup</span>
+                </label>
+            </div>
+
+            <form id="apiForm">
+                <div id="phoneFields">
+                    <div class="form-group">
+                        <label for="phone">Phone Number</label>
+                        <input type="text" id="phone" placeholder="e.g., 9146329882">
+                    </div>
+                </div>
+
+                <div id="locationFields" class="hidden">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="street">Street Address</label>
+                            <input type="text" id="street" placeholder="e.g., 10 Melrose Dr">
+                        </div>
+                        <div class="form-group">
+                            <label for="city">City</label>
+                            <input type="text" id="city" placeholder="e.g., New Rochelle">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="postal">Postal Code</label>
+                            <input type="text" id="postal" placeholder="e.g., 10804">
+                        </div>
+                        <div class="form-group">
+                            <label for="state">State Code</label>
+                            <input type="text" id="state" placeholder="e.g., NY" maxlength="2">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="apiKey">API Key</label>
+                    <input type="password" id="apiKey" placeholder="Enter your API key" required>
+                </div>
+
+                <button type="submit" class="btn">Query API</button>
+            </form>
+        </div>
+
+        <div class="results-section" id="resultsSection">
+            <div id="loadingIndicator" class="loading hidden">
+                <div class="spinner"></div>
+                <p style="margin-top: 15px;">Fetching data...</p>
+            </div>
+            <div id="errorContainer"></div>
+            <div id="resultsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const apiRadios = document.querySelectorAll('input[name="api"]');
+        const phoneFields = document.getElementById('phoneFields');
+        const locationFields = document.getElementById('locationFields');
+        const form = document.getElementById('apiForm');
+        const resultsSection = document.getElementById('resultsSection');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const errorContainer = document.getElementById('errorContainer');
+        const resultsContainer = document.getElementById('resultsContainer');
+
+        apiRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (e.target.value === 'phone') {
+                    phoneFields.classList.remove('hidden');
+                    locationFields.classList.add('hidden');
+                } else {
+                    phoneFields.classList.add('hidden');
+                    locationFields.classList.remove('hidden');
+                }
+            });
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const apiType = document.querySelector('input[name="api"]:checked').value;
+            const apiKey = document.getElementById('apiKey').value;
+            
+            let url;
+            if (apiType === 'phone') {
+                const phone = document.getElementById('phone').value;
+                url = `https://api.trestleiq.com/3.2/phone?phone=${encodeURIComponent(phone)}`;
+            } else {
+                const street = document.getElementById('street').value;
+                const city = document.getElementById('city').value;
+                const postal = document.getElementById('postal').value;
+                const state = document.getElementById('state').value;
+                url = `https://api.trestleiq.com/3.1/location?street_line_1=${encodeURIComponent(street)}&city=${encodeURIComponent(city)}&postal_code=${encodeURIComponent(postal)}&state_code=${encodeURIComponent(state)}`;
+            }
+
+            resultsSection.classList.add('active');
+            loadingIndicator.classList.remove('hidden');
+            errorContainer.innerHTML = '';
+            resultsContainer.innerHTML = '';
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'accept': 'application/json',
+                        'x-api-key': apiKey
+                    }
+                });
+
+                const data = await response.json();
+                loadingIndicator.classList.add('hidden');
+
+                if (!response.ok) {
+                    throw new Error(data.message || `API error: ${response.status}`);
+                }
+
+                displayResults(data);
+            } catch (error) {
+                loadingIndicator.classList.add('hidden');
+                errorContainer.innerHTML = `<div class="error"><strong>Error:</strong> ${error.message}</div>`;
+            }
+        });
+
+        function cleanPhoneNumber(phoneNumber) {
+            // Remove +, country codes, spaces, dashes, parentheses
+            let cleaned = phoneNumber.replace(/[\+\-\s\(\)]/g, '');
+            
+            // If it starts with 1 and has 11 digits (US format), remove the leading 1
+            if (cleaned.length === 11 && cleaned.startsWith('1')) {
+                cleaned = cleaned.substring(1);
+            }
+            
+            return cleaned;
+        }
+
+        function extractPeopleAndNumbers(data) {
+            const people = [];
+            
+            function traverse(obj) {
+                if (!obj || typeof obj !== 'object') return;
+                
+                if (Array.isArray(obj)) {
+                    obj.forEach(item => traverse(item));
+                    return;
+                }
+                
+                // Check if this object represents a person
+                if (obj.name || obj.firstname || obj.lastname) {
+                    const person = {
+                        name: obj.name || `${obj.firstname || ''} ${obj.lastname || ''}`.trim(),
+                        phones: [],
+                        addresses: []
+                    };
+                    
+                    // Extract from alternate_phones (reverse phone lookup)
+                    if (obj.alternate_phones && Array.isArray(obj.alternate_phones)) {
+                        obj.alternate_phones.forEach(phoneObj => {
+                            if (phoneObj.phoneNumber) {
+                                person.phones.push({
+                                    number: phoneObj.phoneNumber,
+                                    type: phoneObj.lineType || 'Unknown'
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Extract from phones array (reverse address lookup)
+                    if (obj.phones && Array.isArray(obj.phones)) {
+                        obj.phones.forEach(phoneObj => {
+                            if (phoneObj.phone_number) {
+                                person.phones.push({
+                                    number: phoneObj.phone_number,
+                                    type: phoneObj.line_type || 'Unknown'
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Extract from phone_numbers array
+                    if (obj.phone_numbers && Array.isArray(obj.phone_numbers)) {
+                        obj.phone_numbers.forEach(phoneObj => {
+                            if (phoneObj.phone_number) {
+                                person.phones.push({
+                                    number: phoneObj.phone_number,
+                                    type: phoneObj.line_type || 'Unknown'
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Single phone field
+                    if (obj.phone) {
+                        person.phones.push({
+                            number: obj.phone,
+                            type: obj.phone_type || 'Unknown'
+                        });
+                    }
+                    
+                    // Extract addresses from current_addresses
+                    if (obj.current_addresses && Array.isArray(obj.current_addresses)) {
+                        obj.current_addresses.forEach(addr => {
+                            const address = formatAddress(addr);
+                            if (address) {
+                                person.addresses.push({
+                                    full: address,
+                                    type: 'Current'
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Extract addresses from historical_addresses
+                    if (obj.historical_addresses && Array.isArray(obj.historical_addresses)) {
+                        obj.historical_addresses.forEach(addr => {
+                            const address = formatAddress(addr);
+                            if (address) {
+                                person.addresses.push({
+                                    full: address,
+                                    type: 'Historical'
+                                });
+                            }
+                        });
+                    }
+                    
+                    if (person.name) {
+                        people.push(person);
+                    }
+                }
+                
+                // Continue traversing
+                Object.values(obj).forEach(value => traverse(value));
+            }
+            
+            traverse(data);
+            return people;
+        }
+
+        function formatAddress(addr) {
+            if (!addr) return null;
+            
+            const parts = [];
+            
+            if (addr.street_line_1) parts.push(addr.street_line_1);
+            if (addr.street_line_2) parts.push(addr.street_line_2);
+            
+            const cityState = [];
+            if (addr.city) cityState.push(addr.city);
+            if (addr.state_code) cityState.push(addr.state_code);
+            if (cityState.length > 0) parts.push(cityState.join(', '));
+            
+            if (addr.postal_code) {
+                parts.push(addr.postal_code);
+            }
+            
+            return parts.length > 0 ? parts.join(', ') : null;
+        }
+
+        function displayResults(data) {
+            const people = extractPeopleAndNumbers(data);
+            
+            if (people.length === 0) {
+                resultsContainer.innerHTML = `
+                    <div class="no-results">
+                        <div class="no-results-icon">🔍</div>
+                        <h3>No People Found</h3>
+                        <p>No names or phone numbers were found in the API response.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const totalPhones = people.reduce((sum, person) => sum + person.phones.length, 0);
+            
+            let html = `
+                <div class="summary">
+                    <div class="summary-stats">
+                        <div class="stat">
+                            <div>People Found</div>
+                            <div class="stat-value">${people.length}</div>
+                        </div>
+                        <div class="stat">
+                            <div>Total Phone Numbers</div>
+                            <div class="stat-value">${totalPhones}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            people.forEach((person, index) => {
+                html += `
+                    <div class="person-card">
+                        <div class="person-name">
+                            <span>${escapeHtml(person.name)}</span>
+                            ${person.phones.length > 0 ? `
+                                <div style="display: flex; gap: 10px;">
+                                    <button class="copy-all-btn" onclick="copyNameWithNumbers(${index})">Copy Name + Numbers</button>
+                                    <button class="copy-all-btn" onclick="copyAllNumbers(${index})">Copy All Numbers</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                `;
+                
+                // Display addresses
+                if (person.addresses.length > 0) {
+                    person.addresses.forEach(addr => {
+                        html += `
+                            <div class="address-section">
+                                <div class="address-content">
+                                    <div class="address-label">${addr.type} Address</div>
+                                    <div class="address-text">${escapeHtml(addr.full)}</div>
+                                </div>
+                                <button class="copy-btn" onclick="copyAddress('${escapeHtml(addr.full)}', this)">Copy</button>
+                            </div>
+                        `;
+                    });
+                }
+                
+                if (person.phones.length > 0) {
+                    html += '<div class="phone-list">';
+                    person.phones.forEach((phone, phoneIndex) => {
+                        html += `
+                            <div class="phone-item">
+                                <div>
+                                    <span class="phone-number">${escapeHtml(phone.number)}</span>
+                                    <span class="phone-type">${escapeHtml(phone.type)}</span>
+                                </div>
+                                <button class="copy-btn" onclick="copyPhone('${escapeHtml(phone.number)}', this)">Copy</button>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                } else {
+                    html += '<p style="color: #666; font-style: italic;">No phone numbers available</p>';
+                }
+                
+                html += '</div>';
+            });
+            
+            resultsContainer.innerHTML = html;
+            
+            // Store people data globally for copy functions
+            window.peopleData = people;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function copyPhone(number, btn) {
+            const cleanedNumber = cleanPhoneNumber(number);
+            navigator.clipboard.writeText(cleanedNumber).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+
+        function copyAddress(address, btn) {
+            navigator.clipboard.writeText(address).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+
+        function copyAllNumbers(personIndex) {
+            const person = window.peopleData[personIndex];
+            const numbers = person.phones.map(p => cleanPhoneNumber(p.number)).join(', ');
+            
+            navigator.clipboard.writeText(numbers).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied All!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            });
+        }
+
+        function copyNameWithNumbers(personIndex) {
+            const person = window.peopleData[personIndex];
+            const numbers = person.phones.map(p => cleanPhoneNumber(p.number)).join(', ');
+            const textToCopy = `${person.name}: ${numbers}`;
+            
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
