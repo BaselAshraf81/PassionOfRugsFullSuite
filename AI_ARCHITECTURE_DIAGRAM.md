@@ -150,19 +150,21 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ 1. Both phone and address API calls complete successfully       │
+│ 1. API calls complete (phone and/or address) or data from cache │
 └──────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ 2. Check if AI filtering enabled                                │
+│ 2. Check if AI filtering enabled AND accumulated data has       │
+│    meaningful results (not just "NO RESULTS FOUND")             │
 └──────────────────────────────────────────────────────────────────┘
                               │
                     ┌─────────┴─────────┐
                     │                   │
                     ▼                   ▼
             ┌──────────────┐    ┌──────────────┐
-            │ Enabled      │    │ Disabled     │
+            │ Enabled &    │    │ Disabled or  │
+            │ Has Results  │    │ No Results   │
             └──────────────┘    └──────────────┘
                     │                   │
                     │                   ▼

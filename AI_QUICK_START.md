@@ -94,7 +94,7 @@ Click the ⚙️ Settings button in the dialer screen:
 
 **"No AI Analysis Available" message:**
 - Wait for API calls to complete
-- Check that both phone and address lookups succeeded
+- Check that accumulated data has meaningful results
 - Make sure AI Person Filtering is enabled in settings
 
 **Address correction not working:**

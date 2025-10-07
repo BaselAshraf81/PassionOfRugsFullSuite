@@ -82,11 +82,11 @@ Successfully implemented AI-powered address correction and intelligent person fi
 ```
 1. User loads person
    ↓
-2. Perform API lookups (phone & address)
+2. Perform API lookups (phone & address) (or from cache - cache logic is implemented)
    ↓
 3. If address fails → AI correction → Retry
    ↓
-4. If both APIs succeed → AI analysis
+4. AI analysis on total accumulated data (unless both reverses even after address corrections are no results)
    ↓
 5. Display results in both tabs:
    - Standard View: Traditional results
@@ -116,9 +116,9 @@ Successfully implemented AI-powered address correction and intelligent person fi
 ### AI Person Filtering Flow
 
 ```
-1. Both phone & address APIs succeed
+1. API calls complete (phone and/or address) or data loaded from cache
    ↓
-2. Check if AI enabled & filtering enabled
+2. Check if AI enabled & filtering enabled & accumulated data has meaningful results
    ↓
 3. Send original data + API responses to GPT-4o-mini
    ↓
@@ -371,7 +371,7 @@ Potential improvements for future versions:
 
 **AI analysis not showing:**
 - Wait for API calls to complete
-- Check both APIs succeeded
+- Check that accumulated data has meaningful results
 - Enable AI filtering in settings
 
 **Address correction not working:**

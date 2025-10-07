@@ -49,8 +49,9 @@ The AI Overview & Filtering tab provides intelligent address correction and pers
 - Provides actionable insights and recommendations
 
 **When it triggers:**
-- After BOTH reverse phone AND reverse address API calls succeed
+- After API calls complete (phone and/or address) or data loaded from cache
 - Only if AI features are enabled in settings
+- Only if accumulated data has meaningful results (not just "NO RESULTS FOUND")
 
 **Data analyzed:**
 - Original customer data (name, phone, address from 2015)
@@ -211,7 +212,7 @@ Using GPT-5 nano (cheapest OpenAI model available):
 **Cost optimization:**
 - Only corrects addresses that fail (not all addresses)
 - Corrections are logged and can be cached
-- Person filtering only runs when both APIs succeed
+- Person filtering runs on accumulated data when meaningful results exist
 - No redundant API calls
 
 ---
@@ -234,7 +235,7 @@ Using GPT-5 nano (cheapest OpenAI model available):
 
 **Possible causes:**
 1. API lookups haven't completed yet
-2. Both phone and address lookups failed
+2. Accumulated data has no meaningful results
 3. AI Person Filtering is disabled in settings
 
 **Solutions:**

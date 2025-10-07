@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 AI Assistant for Passion Of Rugs Advanced Dialer v4.1
-Provides address correction and intelligent person filtering using OpenAI GPT-5 nano
-(Cheapest option: $0.025/1M input tokens, $0.20/1M output tokens - Batch tier)
+Provides address correction and intelligent person filtering using OpenAI GPT-4o-mini
+(Cost-effective option: $0.150/1M input tokens, $0.600/1M output tokens)
 """
 
 import json
@@ -23,9 +23,9 @@ except ImportError:
 class AIAssistant:
     """AI-powered address correction and person filtering"""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5-nano"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini"):
         self.api_key = api_key
-        self.model = model  # Default: gpt-5-nano (cheapest option)
+        self.model = model  # Default: gpt-4o-mini (cost-effective option)
         self.enabled = HAS_OPENAI and bool(api_key)
         
         if self.enabled:
@@ -104,7 +104,8 @@ Correct this address to match API requirements. Return ONLY valid JSON:
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
-                    max_completion_tokens=300
+                    max_completion_tokens=500,
+                    temperature=0.1
                 )
             except Exception as format_error:
                 logger.warning(f"JSON format not supported, trying without: {format_error}")
@@ -112,7 +113,8 @@ Correct this address to match API requirements. Return ONLY valid JSON:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=300
+                    max_completion_tokens=500,
+                    temperature=0.1
                 )
             
             # Debug: Log the raw response
@@ -227,7 +229,8 @@ IMPORTANT: Only include people clearly connected to original customer. Exclude u
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
-                    max_completion_tokens=1500
+                    max_completion_tokens=1500,
+                    temperature=0.1
                 )
             except Exception as format_error:
                 logger.warning(f"JSON format not supported, trying without: {format_error}")
@@ -235,7 +238,8 @@ IMPORTANT: Only include people clearly connected to original customer. Exclude u
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=1500
+                    max_completion_tokens=1500,
+                    temperature=0.1
                 )
             
             # Debug: Log the raw response

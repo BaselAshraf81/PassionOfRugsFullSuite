@@ -503,10 +503,17 @@ class DialerGUI:
         setup_frame.update_idletasks()
         canvas.config(scrollregion=canvas.bbox("all"))
         
-        # Bind mousewheel to canvas
+        # Bind mousewheel to canvas (local binding, not global)
         def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            try:
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            except tk.TclError:
+                # Canvas has been destroyed, ignore the event
+                pass
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        
+        # Also bind to the canvas frame to catch mouse events
+        canvas_frame.bind("<MouseWheel>", _on_mousewheel)
         
         # Try to load from config
         try:
@@ -1541,6 +1548,10 @@ class DialerGUI:
         self.current_person_idx = index
         person = self.original_data[index]
         
+        # Clear AI results for new person
+        self.ai_results = None
+        self.clear_ai_tab()
+        
         # Update counter
         self.person_counter_label.config(text=f"Person {index + 1} of {len(self.original_data)}")
         
@@ -1585,10 +1596,30 @@ class DialerGUI:
                     self.current_result_idx = 0
                     self.current_phone_idx = 0
                     
+                    # Run AI analysis if enabled and we have accumulated data (unless both reverses have no results)
+                    if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
+                        # Check if we have any meaningful results from accumulated data
+                        has_results = False
+                        if results and len(results) > 0:
+                            # Check if we have actual results (not just "NO RESULTS FOUND")
+                            for result in results:
+                                if result.get('new_name') != 'NO RESULTS FOUND':
+                                    has_results = True
+                                    break
+                        
+                        # Run AI analysis if we have any accumulated data with results
+                        if has_results and (phone_data or address_data):
+                            self.ai_results = self.process_ai_analysis(person, phone_data, address_data)
+                            # Update AI tab
+                            self.show_ai_tab(self.ai_tab)
+                    
                     # Save to Excel and update Excel cache
                     self.save_results_to_excel(results)
                     if results:
                         self.excel_cache.update(original_phone, results[0])
+                    
+                    # Ensure Standard View tab is selected
+                    self.results_notebook.select(0)
                     
                     self.display_current_result()
                     self.update_status("Data loaded from cache - no API cost", self.colors['success'])
@@ -1688,9 +1719,19 @@ class DialerGUI:
             self.current_result_idx = 0
             self.current_phone_idx = 0
             
-            # Run AI analysis if enabled and we have data from both APIs
+            # Run AI analysis if enabled and we have accumulated data (unless both reverses have no results)
             if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
-                if phone_data or address_data:
+                # Check if we have any meaningful results from accumulated data
+                has_results = False
+                if results and len(results) > 0:
+                    # Check if we have actual results (not just "NO RESULTS FOUND")
+                    for result in results:
+                        if result.get('new_name') != 'NO RESULTS FOUND':
+                            has_results = True
+                            break
+                
+                # Run AI analysis if we have any accumulated data with results
+                if has_results and (phone_data or address_data):
                     self.ai_results = self.process_ai_analysis(person, phone_data, address_data)
                     # Update AI tab
                     self.root.after(0, lambda: self.show_ai_tab(self.ai_tab))
@@ -1701,6 +1742,9 @@ class DialerGUI:
             # Update Excel cache
             if results:
                 self.excel_cache.update(original_phone, results[0])
+            
+            # Ensure Standard View tab is selected
+            self.root.after(0, lambda: self.results_notebook.select(0))
             
             self.root.after(0, self.display_current_result)
             
@@ -1890,7 +1934,7 @@ class DialerGUI:
         
         return results
     
-    def accumulate_phone_results(self, phone_data, original_person):
+    def accumulate_phone_results(self, phone_data, original_person, trigger_ai=True):
         """Accumulate phone lookup results with existing data using comprehensive extraction"""
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
@@ -1937,9 +1981,37 @@ class DialerGUI:
         self.save_results_to_excel(self.current_results)
         if self.current_results:
             self.excel_cache.update(original_phone, self.current_results[0])
+        
+        # Trigger AI analysis if enabled and we have accumulated data
+        if trigger_ai and self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
+            # Get both phone and address data from cache for AI analysis
+            phone_api_data = phone_data
+            address_api_data = {}
+            if self.lead_processor.cache_manager:
+                cached = self.lead_processor.cache_manager.get_cached_lookup(original_phone)
+                if cached:
+                    address_api_data = cached[1] or {}
+            
+            # Check if we have any meaningful results from accumulated data
+            has_results = False
+            if self.current_results and len(self.current_results) > 0:
+                for result in self.current_results:
+                    if result.get('new_name') != 'NO RESULTS FOUND':
+                        has_results = True
+                        break
+            
+            # Run AI analysis if we have any accumulated data with results
+            if has_results and (phone_api_data or address_api_data):
+                self.ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
+                # Update AI tab
+                self.show_ai_tab(self.ai_tab)
+        
+        # Ensure Standard View tab is selected
+        self.results_notebook.select(0)
+        
         self.display_current_result()
     
-    def accumulate_address_results(self, address_data, original_person):
+    def accumulate_address_results(self, address_data, original_person, trigger_ai=True):
         """Accumulate address lookup results with existing data using comprehensive extraction"""
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
@@ -1988,7 +2060,58 @@ class DialerGUI:
         self.save_results_to_excel(self.current_results)
         if self.current_results:
             self.excel_cache.update(original_phone, self.current_results[0])
+        
+        # Trigger AI analysis if enabled and we have accumulated data
+        if trigger_ai and self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
+            # Get both phone and address data from cache for AI analysis
+            address_api_data = address_data
+            phone_api_data = {}
+            if self.lead_processor.cache_manager:
+                cached = self.lead_processor.cache_manager.get_cached_lookup(original_phone)
+                if cached:
+                    phone_api_data = cached[0] or {}
+            
+            # Check if we have any meaningful results from accumulated data
+            has_results = False
+            if self.current_results and len(self.current_results) > 0:
+                for result in self.current_results:
+                    if result.get('new_name') != 'NO RESULTS FOUND':
+                        has_results = True
+                        break
+            
+            # Run AI analysis if we have any accumulated data with results
+            if has_results and (phone_api_data or address_api_data):
+                self.ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
+                # Update AI tab
+                self.show_ai_tab(self.ai_tab)
+        
+        # Ensure Standard View tab is selected
+        self.results_notebook.select(0)
+        
         self.display_current_result()
+    
+    def clear_ai_tab(self):
+        """Clear the AI tab content"""
+        # Clear existing content
+        for widget in self.ai_tab.winfo_children():
+            widget.destroy()
+        
+        # Show "Loading..." or "No Analysis" message
+        tk.Label(
+            self.ai_tab,
+            text="No AI Analysis Available",
+            font=('Arial', 14, 'bold'),
+            bg='white',
+            fg='#999'
+        ).pack(pady=50)
+        
+        tk.Label(
+            self.ai_tab,
+            text="AI analysis will appear here after API lookups complete",
+            font=('Arial', 10),
+            bg='white',
+            fg='#666'
+        ).pack()
     
     def refresh_current_person(self):
         """Refresh current person data by forcing fresh API calls (no confirmation)"""
