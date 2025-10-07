@@ -275,6 +275,11 @@ class DialerGUI:
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Enable mouse wheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
         # Form frame
         form = tk.Frame(setup_frame, bg=self.colors['white'], relief=tk.RAISED, bd=2)
         form.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -1040,13 +1045,13 @@ class DialerGUI:
         self.results_notebook = ttk.Notebook(result_frame)
         self.results_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         
-        # Tab 1: Standard Results
-        standard_tab = tk.Frame(self.results_notebook, bg=self.colors['white'])
-        self.results_notebook.add(standard_tab, text="Standard View")
-        
-        # Tab 2: AI Overview
+        # Tab 1: AI Overview (Default tab)
         self.ai_tab = tk.Frame(self.results_notebook, bg='white')
         self.results_notebook.add(self.ai_tab, text="AI Overview & Filtering")
+        
+        # Tab 2: Standard Results
+        standard_tab = tk.Frame(self.results_notebook, bg=self.colors['white'])
+        self.results_notebook.add(standard_tab, text="Standard View")
         
         # Now create the standard results view in standard_tab instead of result_frame
         result_frame_inner = standard_tab
@@ -1229,6 +1234,12 @@ class DialerGUI:
         addresses_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         addresses_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Enable mouse wheel scrolling for addresses
+        def on_addresses_mousewheel(event):
+            addresses_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        addresses_canvas.bind("<Enter>", lambda e: addresses_canvas.bind_all("<MouseWheel>", on_addresses_mousewheel))
+        addresses_canvas.bind("<Leave>", lambda e: addresses_canvas.unbind_all("<MouseWheel>"))
+        
         # Update scroll region when addresses change
         self.addresses_canvas = addresses_canvas
         self.addresses_frame.bind('<Configure>', lambda e: addresses_canvas.configure(scrollregion=addresses_canvas.bbox("all")))
@@ -1406,6 +1417,12 @@ class DialerGUI:
         settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         settings_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Enable mouse wheel scrolling for settings
+        def on_settings_mousewheel(event):
+            settings_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        settings_canvas.bind("<Enter>", lambda e: settings_canvas.bind_all("<MouseWheel>", on_settings_mousewheel))
+        settings_canvas.bind("<Leave>", lambda e: settings_canvas.unbind_all("<MouseWheel>"))
+        
         # Initialize setting variables
         self.setting_vars = {}
         
@@ -1579,11 +1596,18 @@ class DialerGUI:
         # Check permanent cache for raw API responses
         original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
         
-        # Try to load from permanent cache (raw API responses)
+        # Check if we have preloaded AI results for this person
+        preloaded_ai = None
+        if hasattr(self, 'preloaded_ai_results') and original_phone in self.preloaded_ai_results:
+            preloaded_ai = self.preloaded_ai_results[original_phone]
+            del self.preloaded_ai_results[original_phone]  # Remove after use
+            logger.info(f"Using preloaded AI analysis for {person.get('name', 'Unknown')}")
+        
+        # Try to load from permanent cache (raw API responses and AI analysis)
         if self.lead_processor.cache_manager:
             cached_lookup = self.lead_processor.cache_manager.get_cached_lookup(original_phone)
             if cached_lookup:
-                phone_data, address_data = cached_lookup
+                phone_data, address_data, cached_ai_analysis = cached_lookup
                 # Check if cached data has actual results
                 phone_has_data = phone_data and phone_data.get('owners')
                 address_has_data = address_data and address_data.get('current_residents')
@@ -1596,7 +1620,11 @@ class DialerGUI:
                     self.current_result_idx = 0
                     self.current_phone_idx = 0
                     
-                    # Run AI analysis if enabled and we have accumulated data (unless both reverses have no results)
+                    # AI tab is now default (tab 0), Standard View is tab 1
+                    # Keep AI tab selected by default
+                    self.display_current_result()
+                    
+                    # Handle AI analysis - use cached if available, otherwise run new analysis
                     if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
                         # Check if we have any meaningful results from accumulated data
                         has_results = False
@@ -1607,22 +1635,26 @@ class DialerGUI:
                                     has_results = True
                                     break
                         
-                        # Run AI analysis if we have any accumulated data with results
-                        if has_results and (phone_data or address_data):
-                            self.ai_results = self.process_ai_analysis(person, phone_data, address_data)
-                            # Update AI tab
-                            self.show_ai_tab(self.ai_tab)
+                        if has_results:
+                            # Use cached AI analysis if available
+                            if cached_ai_analysis:
+                                self.ai_results = cached_ai_analysis
+                                self.show_ai_tab(self.ai_tab)
+                                self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
+                            elif phone_data or address_data:
+                                # Run new AI analysis in background only if not cached
+                                threading.Thread(target=self._run_ai_analysis_background, 
+                                               args=(person, phone_data, address_data, original_phone), 
+                                               daemon=True).start()
+                                self.update_status("Data loaded from cache - running AI analysis...", self.colors['secondary'])
                     
                     # Save to Excel and update Excel cache
                     self.save_results_to_excel(results)
                     if results:
                         self.excel_cache.update(original_phone, results[0])
                     
-                    # Ensure Standard View tab is selected
-                    self.results_notebook.select(0)
-                    
-                    self.display_current_result()
-                    self.update_status("Data loaded from cache - no API cost", self.colors['success'])
+                    if not cached_ai_analysis:
+                        self.update_status("Data loaded from cache - no API cost", self.colors['success'])
                     return
         
         # No cache or empty cache - perform API lookups
@@ -1636,6 +1668,7 @@ class DialerGUI:
             original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
             cache_manager = self.lead_processor.cache_manager
             was_cached = False
+            cached_ai_analysis = None
             
             # Check cache first (unless force refresh)
             phone_data = None
@@ -1644,7 +1677,7 @@ class DialerGUI:
             if not force_refresh and cache_manager:
                 cached_lookup = cache_manager.get_cached_lookup(original_phone)
                 if cached_lookup:
-                    phone_data, address_data = cached_lookup
+                    phone_data, address_data, cached_ai_analysis = cached_lookup
                     # Check if cached data is empty - if so, try API instead
                     phone_has_data = phone_data and phone_data.get('owners')
                     address_has_data = address_data and address_data.get('current_residents')
@@ -1655,6 +1688,7 @@ class DialerGUI:
                         # Cached but empty - treat as not cached to trigger API call
                         phone_data = None
                         address_data = None
+                        cached_ai_analysis = None
             
             # Determine what to fetch based on auto settings
             auto_phone = self.settings.get('auto_phone_lookup', True)
@@ -1719,7 +1753,15 @@ class DialerGUI:
             self.current_result_idx = 0
             self.current_phone_idx = 0
             
-            # Run AI analysis if enabled and we have accumulated data (unless both reverses have no results)
+            # Save to Excel and update Excel cache immediately
+            self.save_results_to_excel(results)
+            if results:
+                self.excel_cache.update(original_phone, results[0])
+            
+            # AI tab is now default (tab 0) - keep it selected
+            self.root.after(0, self.display_current_result)
+            
+            # Run AI analysis if enabled and we have accumulated data
             if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
                 # Check if we have any meaningful results from accumulated data
                 has_results = False
@@ -1730,23 +1772,17 @@ class DialerGUI:
                             has_results = True
                             break
                 
-                # Run AI analysis if we have any accumulated data with results
                 if has_results and (phone_data or address_data):
-                    self.ai_results = self.process_ai_analysis(person, phone_data, address_data)
-                    # Update AI tab
-                    self.root.after(0, lambda: self.show_ai_tab(self.ai_tab))
-            
-            # Save to Excel
-            self.save_results_to_excel(results)
-            
-            # Update Excel cache
-            if results:
-                self.excel_cache.update(original_phone, results[0])
-            
-            # Ensure Standard View tab is selected
-            self.root.after(0, lambda: self.results_notebook.select(0))
-            
-            self.root.after(0, self.display_current_result)
+                    # Use cached AI analysis if available
+                    if cached_ai_analysis:
+                        self.ai_results = cached_ai_analysis
+                        self.root.after(0, lambda: self.show_ai_tab(self.ai_tab))
+                        self.root.after(0, lambda: self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success']))
+                    else:
+                        # Run AI analysis in background only if not cached
+                        threading.Thread(target=self._run_ai_analysis_background, 
+                                       args=(person, phone_data, address_data, original_phone), 
+                                       daemon=True).start()
             
             # Show appropriate status message
             if force_refresh:
@@ -1758,7 +1794,8 @@ class DialerGUI:
             else:
                 self.root.after(0, lambda: self.update_status("Data loaded from API - cached for future use"))
         except Exception as e:
-            self.root.after(0, lambda: self.update_status(f"Error: {str(e)}", self.colors['danger']))
+            error_msg = f"Error: {str(e)}"
+            self.root.after(0, lambda: self.update_status(error_msg, self.colors['danger']))
     
     def extract_people_from_data(self, data):
         """Extract all people, phones, and addresses from API response using recursive traversal"""
@@ -2006,8 +2043,7 @@ class DialerGUI:
                 # Update AI tab
                 self.show_ai_tab(self.ai_tab)
         
-        # Ensure Standard View tab is selected
-        self.results_notebook.select(0)
+        # AI tab is now default (tab 0) - keep it selected
         
         self.display_current_result()
     
@@ -2085,10 +2121,32 @@ class DialerGUI:
                 # Update AI tab
                 self.show_ai_tab(self.ai_tab)
         
-        # Ensure Standard View tab is selected
-        self.results_notebook.select(0)
+        # AI tab is now default (tab 0) - keep it selected
         
         self.display_current_result()
+    
+    def _run_ai_analysis_background(self, person, phone_data, address_data, original_phone):
+        """Run AI analysis in background thread and update cache"""
+        try:
+            ai_results = self.process_ai_analysis(person, phone_data, address_data)
+            if ai_results:
+                # Update cache with AI analysis
+                if self.lead_processor.cache_manager:
+                    self.lead_processor.cache_manager.update_ai_analysis(original_phone, ai_results)
+                
+                # Update UI on main thread
+                self.root.after(0, lambda: self._update_ai_results(ai_results))
+            else:
+                self.root.after(0, lambda: self.update_status("AI analysis completed", self.colors['success']))
+        except Exception as e:
+            logger.error(f"Background AI analysis error: {e}")
+            self.root.after(0, lambda: self.update_status("AI analysis error", self.colors['danger']))
+    
+    def _update_ai_results(self, ai_results):
+        """Update AI results on main thread"""
+        self.ai_results = ai_results
+        self.show_ai_tab(self.ai_tab)
+        self.update_status("AI analysis complete", self.colors['success'])
     
     def clear_ai_tab(self):
         """Clear the AI tab content"""
@@ -2113,6 +2171,143 @@ class DialerGUI:
             fg='#666'
         ).pack()
     
+    def start_preloading_next_person(self):
+        """Start preloading the next person's data in background - DISABLED to prevent wrong person AI analysis"""
+        # Preloading disabled - was causing AI analysis to run for wrong person
+        # and not properly checking cache before running analysis
+        pass
+    
+    def preload_person_data(self, person_idx):
+        """Preload person data in background thread using existing cache-checking logic"""
+        try:
+            if person_idx >= len(self.original_data):
+                return
+            
+            person = self.original_data[person_idx]
+            original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
+            
+            # Use the same logic as perform_lookups but in background
+            cache_manager = self.lead_processor.cache_manager
+            phone_data = None
+            address_data = None
+            
+            # Check cache first
+            if cache_manager:
+                cached_lookup = cache_manager.get_cached_lookup(original_phone)
+                if cached_lookup:
+                    phone_data, address_data, cached_ai_analysis = cached_lookup
+                    # Check if cached data is empty - if so, try API instead
+                    phone_has_data = phone_data and phone_data.get('owners')
+                    address_has_data = address_data and address_data.get('current_residents')
+                    
+                    if phone_has_data or address_has_data:
+                        # Already cached with good data, check if AI analysis is also cached
+                        logger.info(f"Using cached data for preloading {person.get('name', 'Unknown')}")
+                        if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
+                            if cached_ai_analysis:
+                                # AI analysis is also cached, store it for instant loading
+                                if not hasattr(self, 'preloaded_ai_results'):
+                                    self.preloaded_ai_results = {}
+                                self.preloaded_ai_results[original_phone] = cached_ai_analysis
+                                logger.info(f"Using cached AI analysis for preloading {person.get('name', 'Unknown')}")
+                            else:
+                                # Run AI analysis on cached data
+                                self.preload_ai_analysis(person, phone_data, address_data, original_phone)
+                        return
+            
+            # Not cached or empty cache, perform API lookups
+            auto_phone = self.settings.get('auto_phone_lookup', True)
+            auto_address = self.settings.get('auto_address_lookup', True)
+            
+            # Phone lookup
+            if auto_phone:
+                try:
+                    phone_data = self.lead_processor.phone_lookup(original_phone)
+                except Exception as e:
+                    logger.error(f"Preload phone lookup error: {e}")
+                    phone_data = None
+            
+            # Address lookup with AI correction support
+            if auto_address:
+                try:
+                    street = person.get('address', '')
+                    city = person.get('city', '')
+                    state = person.get('state', '')
+                    zip_code = person.get('zip', '')
+                    
+                    # Parse address if needed
+                    if street and (not city or not state or not zip_code):
+                        parsed = self.lead_processor.parse_address(street)
+                        street = parsed['street'] or street
+                        city = parsed['city'] or city
+                        state = parsed['state'] or state
+                        zip_code = parsed['zip'] or zip_code
+                    
+                    if any([street, city, state, zip_code]):
+                        # Use address_lookup with AI correction enabled
+                        enable_ai_correction = (self.settings.get('ai_enabled') and 
+                                              self.settings.get('ai_address_correction', True) and 
+                                              self.ai_assistant)
+                        
+                        result = self.lead_processor.address_lookup(
+                            street, city, state, zip_code, 
+                            enable_ai_correction=enable_ai_correction
+                        )
+                        
+                        # Handle tuple return (result, correction_info)
+                        if isinstance(result, tuple):
+                            address_data, correction_info = result
+                        else:
+                            address_data = result
+                            
+                except Exception as e:
+                    logger.error(f"Preload address lookup error: {e}")
+                    address_data = None
+            
+            # Store in cache if we have results
+            if cache_manager:
+                phone_has_results = phone_data and phone_data.get('owners')
+                address_has_results = address_data and address_data.get('current_residents')
+                
+                if phone_has_results or address_has_results:
+                    cache_manager.store_lookup(original_phone, phone_data or {}, address_data or {})
+                    logger.info(f"Cached preloaded data for {person.get('name', 'Unknown')}")
+            
+            # Preload AI analysis if we have meaningful data
+            if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
+                if phone_data or address_data:
+                    self.preload_ai_analysis(person, phone_data, address_data, original_phone)
+                
+        except Exception as e:
+            logger.error(f"Preload person data error: {e}")
+    
+    def preload_ai_analysis(self, person, phone_data, address_data, original_phone):
+        """Preload AI analysis in background"""
+        try:
+            if not self.ai_assistant:
+                return
+            
+            # Check if we have meaningful results
+            results = self.process_lookup_data(person, phone_data, address_data)
+            has_results = False
+            if results and len(results) > 0:
+                for result in results:
+                    if result.get('new_name') != 'NO RESULTS FOUND':
+                        has_results = True
+                        break
+            
+            if has_results and (phone_data or address_data):
+                ai_results = self.process_ai_analysis(person, phone_data, address_data)
+                if ai_results:
+                    # Store preloaded AI results in cache or memory
+                    if not hasattr(self, 'preloaded_ai_results'):
+                        self.preloaded_ai_results = {}
+                    self.preloaded_ai_results[original_phone] = ai_results
+                    logger.info(f"Preloaded AI analysis for {person.get('name', 'Unknown')}")
+                    
+        except Exception as e:
+            logger.error(f"Preload AI analysis error: {e}")
+    
     def refresh_current_person(self):
         """Refresh current person data by forcing fresh API calls (no confirmation)"""
         if self.current_person_idx < 0 or self.current_person_idx >= len(self.original_data):
@@ -2133,8 +2328,9 @@ class DialerGUI:
                 self.root.after(0, lambda: self.update_status("Data refreshed from API", self.colors['success']))
                 self.root.after(3000, lambda: self.update_status("Ready"))
             except Exception as e:
+                error_msg = f"Refresh error: {str(e)}"
                 self.root.after(0, lambda: self.refresh_btn.config(state='normal', text='🔄'))
-                self.root.after(0, lambda: self.update_status(f"Refresh error: {str(e)}", self.colors['danger']))
+                self.root.after(0, lambda: self.update_status(error_msg, self.colors['danger']))
         
         threading.Thread(target=refresh_worker, daemon=True).start()
     
@@ -3144,7 +3340,8 @@ class DialerGUI:
                 
                 self.root.after(0, lambda: self.update_status("Manual phone lookup complete - data added", self.colors['success']))
             except Exception as e:
-                self.root.after(0, lambda: self.update_status(f"Phone lookup error: {str(e)}", self.colors['danger']))
+                error_msg = f"Phone lookup error: {str(e)}"
+                self.root.after(0, lambda: self.update_status(error_msg, self.colors['danger']))
         
         threading.Thread(target=do_lookup, daemon=True).start()
     
@@ -3196,7 +3393,8 @@ class DialerGUI:
                 
                 self.root.after(0, lambda: self.update_status("Manual address lookup complete - data added", self.colors['success']))
             except Exception as e:
-                self.root.after(0, lambda: self.update_status(f"Address lookup error: {str(e)}", self.colors['danger']))
+                error_msg = f"Address lookup error: {str(e)}"
+                self.root.after(0, lambda: self.update_status(error_msg, self.colors['danger']))
         
         threading.Thread(target=do_lookup, daemon=True).start()
     
@@ -3309,6 +3507,12 @@ class DialerGUI:
         tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         tree_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Enable mouse wheel scrolling for call history
+        def on_tree_mousewheel(event):
+            tree.yview_scroll(int(-1*(event.delta/120)), "units")
+        tree.bind("<Enter>", lambda e: tree.bind_all("<MouseWheel>", on_tree_mousewheel))
+        tree.bind("<Leave>", lambda e: tree.unbind_all("<MouseWheel>"))
         
         # Populate tree with call history (most recent first)
         for entry in reversed(self.call_history):
@@ -3465,6 +3669,12 @@ class DialerGUI:
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Enable mouse wheel scrolling for AI tab
+        def on_ai_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", on_ai_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        
         # Check if AI is enabled
         if not self.ai_assistant or not self.settings.get('ai_enabled'):
             tk.Label(
@@ -3541,144 +3751,394 @@ class DialerGUI:
                             fg=self.colors['success']
                         ).pack(anchor='w', pady=2)
         
-        # AI Filtered Results section
-        results_section = tk.LabelFrame(
+        # AI Horizontal Ranking section
+        ranking_section = tk.LabelFrame(
             scroll_frame,
-            text="AI FILTERED RESULTS",
+            text="AI HORIZONTAL RANKING - CALLING STRATEGY",
             font=('Arial', 10, 'bold'),
             bg='white',
             fg=self.colors['primary']
         )
-        results_section.pack(fill=tk.X, **padding)
+        ranking_section.pack(fill=tk.X, **padding)
         
-        results_frame = tk.Frame(results_section, bg='white')
-        results_frame.pack(fill=tk.X, padx=10, pady=8)
+        ranking_frame = tk.Frame(ranking_section, bg='white')
+        ranking_frame.pack(fill=tk.X, padx=10, pady=8)
         
-        # Primary matches
-        primary_matches = self.ai_results.get('primary_matches', [])
-        if primary_matches:
-            tk.Label(
-                results_frame,
-                text="PRIORITY 1: DIRECT MATCHES",
-                font=('Arial', 9, 'bold'),
-                bg='white',
-                fg=self.colors['success']
-            ).pack(anchor='w', pady=(5, 8))
-            
-            for match in primary_matches:
-                self._display_ai_contact(results_frame, match, is_primary=True)
+        # Display horizontal ranking
+        horizontal_ranking = self.ai_results.get('horizontal_ranking', [])
+        if horizontal_ranking:
+            # Create horizontal layout for persons
+            for person in horizontal_ranking:
+                self._display_ranked_person(ranking_frame, person)
         
-        # Related contacts
-        related_contacts = self.ai_results.get('related_contacts', [])
-        if related_contacts:
-            tk.Label(
-                results_frame,
-                text="PRIORITY 2: RELATED CONTACTS",
-                font=('Arial', 9, 'bold'),
-                bg='white',
-                fg=self.colors['warning']
-            ).pack(anchor='w', pady=(15, 8))
-            
-            for contact in related_contacts:
-                self._display_ai_contact(results_frame, contact, is_primary=False)
-        
-        # AI Insights section
-        insights = self.ai_results.get('insights', {})
-        if insights:
-            insights_section = tk.LabelFrame(
+        # Calling Strategy section
+        strategy = self.ai_results.get('calling_strategy', {})
+        if strategy:
+            strategy_section = tk.LabelFrame(
                 scroll_frame,
-                text="AI INSIGHTS & RECOMMENDATIONS",
+                text="AI CALLING STRATEGY & RECOMMENDATIONS",
                 font=('Arial', 10, 'bold'),
                 bg='white',
                 fg=self.colors['primary']
             )
-            insights_section.pack(fill=tk.X, **padding)
+            strategy_section.pack(fill=tk.X, **padding)
             
-            insights_frame = tk.Frame(insights_section, bg='white')
-            insights_frame.pack(fill=tk.X, padx=10, pady=8)
+            strategy_frame = tk.Frame(strategy_section, bg='white')
+            strategy_frame.pack(fill=tk.X, padx=10, pady=8)
             
-            # Acceptance probability
-            prob = insights.get('acceptance_probability', 0)
-            tk.Label(
-                insights_frame,
-                text=f"Acceptance Probability: {prob}% ({'High' if prob >= 80 else 'Medium' if prob >= 50 else 'Low'})",
-                font=('Arial', 9, 'bold'),
-                bg='white',
-                fg=self.colors['success'] if prob >= 80 else self.colors['warning']
-            ).pack(anchor='w', pady=3)
-            
-            reasoning = insights.get('acceptance_reasoning', '')
-            if reasoning:
+            # Primary recommendation
+            primary_rec = strategy.get('primary_recommendation', '')
+            if primary_rec:
                 tk.Label(
-                    insights_frame,
-                    text=f"└─ {reasoning}",
-                    font=('Arial', 8),
+                    strategy_frame,
+                    text=f"🎯 {primary_rec}",
+                    font=('Arial', 10, 'bold'),
                     bg='white',
-                    fg='#666',
+                    fg=self.colors['success']
+                ).pack(anchor='w', pady=3)
+            
+            # Backup plan
+            backup_plan = strategy.get('backup_plan', '')
+            if backup_plan:
+                tk.Label(
+                    strategy_frame,
+                    text=f"🔄 Backup Plan: {backup_plan}",
+                    font=('Arial', 9),
+                    bg='white',
                     wraplength=600,
                     justify='left'
-                ).pack(anchor='w', padx=15, pady=2)
-            
-            # Recommended contact
-            recommended = insights.get('recommended_first_contact', '')
-            if recommended:
-                tk.Label(
-                    insights_frame,
-                    text=f"Recommended First Contact: {recommended}",
-                    font=('Arial', 9, 'bold'),
-                    bg='white'
-                ).pack(anchor='w', pady=(8, 3))
+                ).pack(anchor='w', pady=3)
             
             # Best time to call
-            best_time = insights.get('best_time_to_call', '')
+            best_time = strategy.get('best_time_to_call', '')
             if best_time:
                 tk.Label(
-                    insights_frame,
-                    text=f"Best Time to Call: {best_time}",
+                    strategy_frame,
+                    text=f"⏰ Best Time to Call: {best_time}",
                     font=('Arial', 9),
                     bg='white'
                 ).pack(anchor='w', pady=3)
             
-            # Address history
-            addr_changes = insights.get('address_changes', 0)
-            time_at_addr = insights.get('time_at_current_address', '')
-            if addr_changes or time_at_addr:
+            # Acceptance probability
+            prob = strategy.get('acceptance_probability', 0)
+            if prob:
                 tk.Label(
-                    insights_frame,
-                    text=f"Address History: {addr_changes} move(s) since purchase",
-                    font=('Arial', 9),
-                    bg='white'
-                ).pack(anchor='w', pady=3)
-                if time_at_addr:
-                    tk.Label(
-                        insights_frame,
-                        text=f"Time at Current Address: {time_at_addr}",
-                        font=('Arial', 9),
-                        bg='white'
-                    ).pack(anchor='w', pady=3)
-            
-            # Additional notes
-            notes = insights.get('additional_notes', '')
-            if notes:
-                tk.Label(
-                    insights_frame,
-                    text="Additional Notes:",
+                    strategy_frame,
+                    text=f"📊 Success Probability: {prob}% ({'High' if prob >= 80 else 'Medium' if prob >= 50 else 'Low'})",
                     font=('Arial', 9, 'bold'),
-                    bg='white'
-                ).pack(anchor='w', pady=(8, 3))
+                    bg='white',
+                    fg=self.colors['success'] if prob >= 80 else self.colors['warning']
+                ).pack(anchor='w', pady=3)
+            
+            # Overall reasoning
+            reasoning = strategy.get('overall_reasoning', '')
+            if reasoning:
                 tk.Label(
-                    insights_frame,
-                    text=f"• {notes}",
-                    font=('Arial', 8),
+                    strategy_frame,
+                    text=f"💡 Strategy: {reasoning}",
+                    font=('Arial', 9),
                     bg='white',
                     fg='#666',
                     wraplength=600,
                     justify='left'
-                ).pack(anchor='w', padx=10, pady=2)
+                ).pack(anchor='w', pady=3)
+        
+        # Status and Notes section (same as Standard View)
+        self._add_ai_status_notes_section(scroll_frame)
         
         # Update scroll region
         scroll_frame.update_idletasks()
         canvas.config(scrollregion=canvas.bbox("all"))
+    
+    def _display_ranked_person(self, parent, person):
+        """Display a single ranked person with all their phone numbers in horizontal layout"""
+        rank = person.get('rank', 0)
+        person_name = person.get('person_name', 'Unknown')
+        relationship = person.get('relationship', 'Unknown')
+        confidence_score = person.get('confidence_score', 0)
+        confidence_level = person.get('confidence_level', 'Low')
+        reasoning = person.get('reasoning', '')
+        current_address = person.get('current_address', '')
+        all_phone_numbers = person.get('all_phone_numbers', [])
+        recommended_first_call = person.get('recommended_first_call', '')
+        
+        # Main person frame with ranking
+        person_frame = tk.Frame(parent, bg='#f0f8ff', relief=tk.RAISED, bd=2)
+        person_frame.pack(fill=tk.X, pady=8, padx=5)
+        
+        # Header with rank and person info
+        header_frame = tk.Frame(person_frame, bg='#f0f8ff')
+        header_frame.pack(fill=tk.X, padx=10, pady=8)
+        
+        # Rank badge
+        rank_color = self.colors['success'] if rank == 1 else self.colors['warning'] if rank == 2 else self.colors['secondary']
+        tk.Label(
+            header_frame,
+            text=f"#{rank}",
+            font=('Arial', 12, 'bold'),
+            bg=rank_color,
+            fg='white',
+            width=3,
+            relief=tk.RAISED,
+            bd=1
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Person details
+        details_frame = tk.Frame(header_frame, bg='#f0f8ff')
+        details_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Name and relationship
+        name_text = f"{person_name}"
+        if relationship != 'Unknown':
+            name_text += f" ({relationship})"
+        tk.Label(
+            details_frame,
+            text=name_text,
+            font=('Arial', 11, 'bold'),
+            bg='#f0f8ff'
+        ).pack(anchor='w')
+        
+        # Confidence score
+        confidence_color = self.colors['success'] if confidence_level == 'High' else self.colors['warning'] if confidence_level == 'Medium' else self.colors['danger']
+        tk.Label(
+            details_frame,
+            text=f"Confidence: {confidence_score}% ({confidence_level})",
+            font=('Arial', 9, 'bold'),
+            bg='#f0f8ff',
+            fg=confidence_color
+        ).pack(anchor='w')
+        
+        # Reasoning
+        if reasoning:
+            tk.Label(
+                details_frame,
+                text=f"└─ {reasoning}",
+                font=('Arial', 8),
+                bg='#f0f8ff',
+                fg='#666',
+                wraplength=400,
+                justify='left'
+            ).pack(anchor='w', padx=10)
+        
+        # Current address
+        if current_address:
+            tk.Label(
+                details_frame,
+                text=f"📍 {current_address}",
+                font=('Arial', 8),
+                bg='#f0f8ff',
+                fg='#666'
+            ).pack(anchor='w', pady=(2, 0))
+        
+        # Phone numbers section
+        if all_phone_numbers:
+            phones_frame = tk.Frame(person_frame, bg='#f0f8ff')
+            phones_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+            
+            tk.Label(
+                phones_frame,
+                text="📞 All Phone Numbers (ranked by call priority):",
+                font=('Arial', 9, 'bold'),
+                bg='#f0f8ff'
+            ).pack(anchor='w', pady=(5, 3))
+            
+            # Display each phone number
+            for phone_info in all_phone_numbers:
+                self._display_phone_option(phones_frame, phone_info, recommended_first_call)
+    
+    def _display_phone_option(self, parent, phone_info, recommended_first_call):
+        """Display a single phone option with call and copy buttons"""
+        phone = phone_info.get('phone', '')
+        phone_type = phone_info.get('phone_type', '')
+        carrier = phone_info.get('carrier', '')
+        call_priority = phone_info.get('call_priority', 0)
+        call_reasoning = phone_info.get('call_reasoning', '')
+        
+        # Phone frame
+        phone_frame = tk.Frame(parent, bg='#ffffff', relief=tk.RAISED, bd=1)
+        phone_frame.pack(fill=tk.X, pady=2, padx=10)
+        
+        # Left side - phone info
+        info_frame = tk.Frame(phone_frame, bg='#ffffff')
+        info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=5)
+        
+        # Priority indicator
+        priority_color = self.colors['success'] if call_priority == 1 else self.colors['warning'] if call_priority == 2 else self.colors['secondary']
+        is_recommended = phone == recommended_first_call
+        
+        priority_text = f"Priority {call_priority}"
+        if is_recommended:
+            priority_text += " ⭐ RECOMMENDED"
+        
+        tk.Label(
+            info_frame,
+            text=priority_text,
+            font=('Arial', 8, 'bold'),
+            bg='#ffffff',
+            fg=priority_color
+        ).pack(anchor='w')
+        
+        # Phone number with type
+        phone_text = f"📱 {phone}"
+        if phone_type:
+            phone_text += f" ({phone_type}"
+            if carrier:
+                phone_text += f" - {carrier}"
+            phone_text += ")"
+        
+        tk.Label(
+            info_frame,
+            text=phone_text,
+            font=('Arial', 9, 'bold' if is_recommended else 'normal'),
+            bg='#ffffff'
+        ).pack(anchor='w')
+        
+        # Call reasoning
+        if call_reasoning:
+            tk.Label(
+                info_frame,
+                text=f"└─ {call_reasoning}",
+                font=('Arial', 8),
+                bg='#ffffff',
+                fg='#666'
+            ).pack(anchor='w', padx=10)
+        
+        # Right side - action buttons
+        buttons_frame = tk.Frame(phone_frame, bg='#ffffff')
+        buttons_frame.pack(side=tk.RIGHT, padx=8, pady=5)
+        
+        # Copy button
+        tk.Button(
+            buttons_frame,
+            text="Copy",
+            command=lambda: self.copy_to_clipboard(phone),
+            font=('Arial', 8),
+            bg=self.colors['secondary'],
+            fg='white',
+            padx=8,
+            pady=2,
+            cursor='hand2'
+        ).pack(side=tk.LEFT, padx=2)
+        
+        # Call button
+        call_bg = self.colors['success'] if is_recommended else self.colors['primary']
+        
+        # Get person name from current results for call tracking
+        person_name = 'AI Contact'
+        if self.current_results and self.current_result_idx < len(self.current_results):
+            person_name = self.current_results[self.current_result_idx].get('new_name', 'AI Contact')
+        
+        tk.Button(
+            buttons_frame,
+            text="Call via CloudTalk",
+            command=lambda p=phone, n=person_name: self.make_call(p, n),
+            font=('Arial', 8, 'bold' if is_recommended else 'normal'),
+            bg=call_bg,
+            fg='white',
+            padx=8,
+            pady=2,
+            cursor='hand2'
+        ).pack(side=tk.LEFT, padx=2)
+    
+    def _add_ai_status_notes_section(self, parent):
+        """Add status and notes section to AI tab (same functionality as Standard View)"""
+        # Status and Notes section
+        status_notes_section = tk.LabelFrame(
+            parent,
+            text="CALL STATUS & NOTES",
+            font=('Arial', 10, 'bold'),
+            bg='white',
+            fg=self.colors['primary']
+        )
+        status_notes_section.pack(fill=tk.X, padx=15, pady=8)
+        
+        status_notes_frame = tk.Frame(status_notes_section, bg='white')
+        status_notes_frame.pack(fill=tk.X, padx=10, pady=8)
+        
+        # Status
+        tk.Label(status_notes_frame, text="Status:", font=('Arial', 9, 'bold'), 
+                bg='white').pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Use the same status_var and status_dropdown as Standard View
+        if not hasattr(self, 'status_var'):
+            self.status_var = tk.StringVar()
+        
+        # Create AI tab status dropdown (linked to the same variable)
+        self.ai_status_dropdown = ttk.Combobox(
+            status_notes_frame,
+            textvariable=self.status_var,
+            values=['', 'No answer', 'Not interested', 'Wrong Number', 'Call back', 'Appointment', 'DNC'],
+            font=('Arial', 10),
+            width=18,
+            state='readonly'
+        )
+        self.ai_status_dropdown.pack(side=tk.LEFT, padx=(0, 15))
+        self.ai_status_dropdown.bind('<<ComboboxSelected>>', self.on_status_change)
+        
+        # Notes
+        tk.Label(status_notes_frame, text="Notes:", font=('Arial', 9, 'bold'), 
+                bg='white').pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Use the same notes_text as Standard View
+        if not hasattr(self, 'notes_text'):
+            self.notes_text = tk.Text(
+                status_notes_frame,
+                font=('Arial', 9),
+                width=30,
+                height=2,
+                wrap=tk.WORD,
+                relief=tk.SOLID,
+                borderwidth=1
+            )
+        
+        # Create AI tab notes text (linked to the same functionality)
+        self.ai_notes_text = tk.Text(
+            status_notes_frame,
+            font=('Arial', 9),
+            width=30,
+            height=2,
+            wrap=tk.WORD,
+            relief=tk.SOLID,
+            borderwidth=1
+        )
+        self.ai_notes_text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        # Sync AI notes with main notes
+        def sync_ai_notes_to_main(event=None):
+            if hasattr(self, 'notes_text'):
+                content = self.ai_notes_text.get('1.0', tk.END)
+                self.notes_text.delete('1.0', tk.END)
+                self.notes_text.insert('1.0', content)
+                self.on_notes_change(event)
+        
+        def sync_main_notes_to_ai():
+            if hasattr(self, 'notes_text'):
+                content = self.notes_text.get('1.0', tk.END)
+                self.ai_notes_text.delete('1.0', tk.END)
+                self.ai_notes_text.insert('1.0', content)
+        
+        self.ai_notes_text.bind('<FocusOut>', sync_ai_notes_to_main)
+        self.ai_notes_text.bind('<KeyRelease>', lambda e: self.on_notes_typing(e) if hasattr(self, 'on_notes_typing') else None)
+        
+        # Store sync function for later use
+        self.sync_main_notes_to_ai = sync_main_notes_to_ai
+        
+        # Save Note button
+        tk.Button(
+            status_notes_frame,
+            text="💾",
+            command=self.save_note_with_status,
+            font=('Arial', 10),
+            bg=self.colors['success'],
+            fg='white',
+            padx=8,
+            pady=2,
+            cursor='hand2'
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Sync current data to AI tab
+        if hasattr(self, 'notes_text'):
+            sync_main_notes_to_ai()
     
     def _display_ai_contact(self, parent, contact, is_primary=True):
         """Display a single AI contact entry"""

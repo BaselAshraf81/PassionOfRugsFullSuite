@@ -155,7 +155,7 @@ Correct this address to match API requirements. Return ONLY valid JSON:
         if not self.enabled:
             return None
         
-        prompt = f"""You are a customer data analyst. Match the original customer with their current contact information.
+        prompt = f"""You are a customer contact specialist. Analyze ALL persons found and recommend the BEST calling strategy.
 
 ORIGINAL CUSTOMER (from 2015 purchase records):
 Name: {original_name}
@@ -168,59 +168,85 @@ REVERSE PHONE API RESPONSE:
 REVERSE ADDRESS API RESPONSE:
 {json.dumps(reverse_address_response, indent=2)}
 
-Task: Identify phone numbers for the ORIGINAL CUSTOMER ONLY (not relatives unless specified).
+Task: Analyze ALL persons found and create a comprehensive calling strategy with horizontal ranking.
 
 Instructions:
-1. Find exact name matches (first + last) from both API responses
-2. Combine all phone numbers for that person (deduplicate)
-3. Prioritize mobile > landline > VOIP
-4. Identify close relatives (spouse, same last name at same address)
-5. Calculate confidence based on:
-   - Name match strength (exact = 100%, partial = lower)
-   - Address continuity (still at address vs moved)
-   - Phone type (mobile higher than VOIP)
-   - Data recency (link_to_address_start_date)
+1. Extract ALL persons from both API responses with ALL their phone numbers
+2. For each person, list ALL phone numbers with types (Mobile, Landline, FixedVOIP, NonFixedVOIP)
+3. Rank persons by likelihood of being the original customer or helpful contact
+4. For each person, rank their phone numbers by call success probability
+5. Provide specific calling recommendations with reasoning
+6. Show horizontal ranking: Person 1 (Primary) → Person 2 (Secondary) → Person 3 (Backup)
 
-Return ONLY this JSON structure:
+Ranking Criteria:
+- Name match strength (exact = highest, partial = medium, different = lowest)
+- Phone type priority: Mobile > Landline > FixedVOIP > NonFixedVOIP
+- Address continuity (same address = higher, moved = medium, unknown = lower)
+- Relationship (customer = highest, spouse = high, relative = medium, unrelated = low)
+
+Return ONLY this JSON structure with HORIZONTAL RANKING:
 
 {{
-  "primary_matches": [
+  "horizontal_ranking": [
     {{
-      "name": "exact customer name",
-      "phone": "+1XXXXXXXXXX",
-      "phone_type": "Mobile|Landline|FixedVOIP|NonFixedVOIP",
-      "carrier": "carrier name",
-      "source": "Reverse Phone|Reverse Address|Both",
-      "current_address": "full address if available",
+      "rank": 1,
+      "person_name": "exact customer name",
+      "relationship": "Original Customer|Spouse|Relative|Associated Person",
       "confidence_score": 95,
       "confidence_level": "High|Medium|Low",
-      "reasoning": "why this is the customer",
-      "priority": 1
-    }}
-  ],
-  "related_contacts": [
+      "reasoning": "exact name match, current mobile number",
+      "current_address": "full address if available",
+      "all_phone_numbers": [
+        {{
+          "phone": "+1XXXXXXXXXX",
+          "phone_type": "Mobile|Landline|FixedVOIP|NonFixedVOIP",
+          "carrier": "carrier name",
+          "source": "Reverse Phone|Reverse Address|Both",
+          "call_priority": 1,
+          "call_reasoning": "primary mobile number"
+        }},
+        {{
+          "phone": "+1YYYYYYYYYY",
+          "phone_type": "Landline",
+          "carrier": "carrier name",
+          "source": "Reverse Address",
+          "call_priority": 2,
+          "call_reasoning": "backup landline"
+        }}
+      ],
+      "recommended_first_call": "+1XXXXXXXXXX"
+    }},
     {{
-      "name": "relative name",
-      "relationship": "Spouse|Same Last Name|Associated Person",
-      "phone": "+1XXXXXXXXXX",
-      "phone_type": "Mobile|Landline",
-      "confidence_score": 70,
+      "rank": 2,
+      "person_name": "spouse or relative name",
+      "relationship": "Spouse|Relative",
+      "confidence_score": 75,
+      "confidence_level": "Medium|High",
       "reasoning": "same address, listed as spouse",
-      "priority": 2
+      "current_address": "same address",
+      "all_phone_numbers": [
+        {{
+          "phone": "+1ZZZZZZZZZZ",
+          "phone_type": "Mobile",
+          "carrier": "carrier name",
+          "source": "Reverse Address",
+          "call_priority": 1,
+          "call_reasoning": "spouse mobile - may have customer info"
+        }}
+      ],
+      "recommended_first_call": "+1ZZZZZZZZZZ"
     }}
   ],
-  "insights": {{
-    "acceptance_probability": 85,
-    "acceptance_reasoning": "exact match, current mobile, active at address",
+  "calling_strategy": {{
+    "primary_recommendation": "Call Person 1 first at +1XXXXXXXXXX (Mobile)",
+    "backup_plan": "If no answer, try Person 1 at +1YYYYYYYYYY (Landline), then Person 2 at +1ZZZZZZZZZZ",
     "best_time_to_call": "Weekday evenings|Business hours|Anytime",
-    "recommended_first_contact": "+1XXXXXXXXXX",
-    "address_changes": 1,
-    "time_at_current_address": "5 years",
-    "additional_notes": "moved from Springfield to Seattle in 2020"
+    "acceptance_probability": 85,
+    "overall_reasoning": "Strong name match with multiple contact options"
   }}
 }}
 
-IMPORTANT: Only include people clearly connected to original customer. Exclude unrelated residents."""
+IMPORTANT: Include ALL persons found with ALL their phone numbers. Rank horizontally by likelihood of success."""
         
         try:
             # First try with json_object format

@@ -1,81 +1,104 @@
 # Passion Of Rugs Advanced Dialer v4.1
 
-Professional dialer application with TrestleIQ API integration and CloudTalk calling.
+Professional dialer application with TrestleIQ API integration, CloudTalk calling, and AI-powered features.
 
 ## Quick Start
 
-### Setup Configuration
-**Option 1: Use setup script (recommended)**
+### 1. Install Dependencies
 ```bash
-python setup.py
+pip install -r requirements.txt
 ```
 
-**Option 2: Manual setup**
-1. Copy the template config file:
-   ```bash
-   copy config.template.py config.py
-   ```
-2. Edit `config.py` and add your API keys:
-   - TrestleIQ API key
-   - CloudTalk credentials (optional)
+### 2. Configure API Keys
+Edit `config.py` and add your API keys:
+- TrestleIQ API key (required)
+- CloudTalk credentials (optional)
+- OpenAI API key (optional, for AI features)
 
-### Run Application
+### 3. Run Application
 ```bash
 python launcher.py
 ```
 
-### Build Executable
+### 4. Build Executable (Optional)
 ```bash
-pip install -r requirements.txt
 python build_v4.1.py
 ```
 
-## Files
+## Core Features
 
-### Source Code
-- `launcher.py` - Main entry point (mode selector)
-- `dialer_gui.py` - Professional Dialer Mode
-- `bulk_processor_gui.py` - Bulk Processing Mode
-- `lead_processor_v2.py` - Core API processing logic
-- `cache_manager.py` - Permanent cache management
-- `config.py` - Configuration (optional)
-
-### Build
-- `build_v4.1.py` - PyInstaller build script
-- `requirements.txt` - Python dependencies
-
-### Documentation
-- `CODE_MAP_v4.1.md` - Complete code reference
-- `AI_FEATURES.md` - AI features guide
-
-### Data Files (Created at Runtime)
-- `call_history.json` - Call history
-- `dialer_settings.json` - User settings
-- `lead_processor_cache.json` - API cache
-- `*.xlsx` - Excel input/output files
-
-### Reference
-- `Names+phones+address.html` - HTML extraction reference
-
-## Features
-
-- Professional Dialer with CloudTalk integration
-- TrestleIQ API for reverse phone/address lookups
-- **NEW: AI-powered address correction (GPT-5 nano - cheapest)**
-- **NEW: Intelligent person filtering & insights**
-- Smart caching system (reduces API costs)
-- Call history tracking
-- Excel input/output with formatting
-- Visual response viewer
+### Professional Dialer Mode
+- CloudTalk integration for one-click calling
+- TrestleIQ reverse phone/address lookups
+- Smart dual caching system (Excel + permanent)
+- Call history tracking (one entry per phone)
+- Manual and automatic API lookups
+- Excel input/output with color coding
+- Visual response viewer with HTML rendering
 - Google Maps integration
+
+### AI Features (Optional)
+- **Automatic address correction** - Fixes malformed addresses and retries API calls
+- **Intelligent person filtering** - Identifies original customer from multiple residents
+- **Confidence scoring** - High/Medium/Low rankings for contacts
+- **Actionable insights** - Best time to call, acceptance probability, recommendations
+- **Cost:** ~$0.0005 per person (0.05 cents) using GPT-5 nano
+
+### Bulk Processing Mode
+- Batch process Excel files
+- Progress tracking
+- Caching for efficiency
+- Formatted Excel output
+
+## Source Files
+
+### Main Application
+- **launcher.py** (145 lines) - Entry point, mode selector
+- **dialer_gui.py** (4280 lines) - Professional dialer interface
+- **bulk_processor_gui.py** (348 lines) - Bulk processing interface
+- **lead_processor_v2.py** (877 lines) - Core API processing logic
+- **cache_manager.py** (283 lines) - Permanent cache management
+- **ai_assistant.py** (200 lines) - AI address correction & person filtering
+- **config.py** (28 lines) - Configuration file
+
+### Build & Documentation
+- **build_v4.1.py** - PyInstaller build script
+- **requirements.txt** - Python dependencies
+- **FUNCTION_REFERENCE.md** - Complete function reference (all functions documented)
+- **SETUP.md** - Setup instructions
+
+## Documentation
+
+### Essential Reading
+- **FUNCTION_REFERENCE.md** - Complete reference of all functions with locations and descriptions
+- **SETUP.md** - Configuration and setup instructions
+
+### For Users
+All user documentation has been consolidated into the application's built-in help and tooltips.
+
+### For Developers
+- **FUNCTION_REFERENCE.md** contains all function descriptions organized by file
+- Each function includes: location (line number), purpose, parameters, return values, and actions
 
 ## Requirements
 
 - Python 3.11+
 - Windows 10/11
-- TrestleIQ API key
-- CloudTalk credentials (optional)
+- TrestleIQ API key (required)
+- CloudTalk credentials (optional, for calling)
+- OpenAI API key (optional, for AI features)
+
+## Data Files (Created at Runtime)
+
+- `call_history.json` - Call history tracking
+- `dialer_settings.json` - User preferences
+- `lead_processor_cache.json` - Permanent API cache
+- `*.xlsx` - Excel input/output files
 
 ## Version
 
-**v4.1** - 2025-10-06
+**v4.1** - 2025-10-07
+
+**Total Code:** ~6,251 lines across 7 Python files  
+**Total Functions:** 100+  
+**Features:** Dialer, Bulk Processing, AI Integration, Caching, Call History

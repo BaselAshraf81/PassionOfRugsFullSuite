@@ -138,15 +138,15 @@ class CacheManager:
                     pass
             return False
     
-    def get_cached_lookup(self, phone: str) -> Optional[Tuple[Dict, Dict]]:
+    def get_cached_lookup(self, phone: str) -> Optional[Tuple[Dict, Dict, Dict]]:
         """
-        Get cached API responses for a phone number
+        Get cached API responses and AI analysis for a phone number
         
         Args:
             phone: Phone number to lookup
         
         Returns:
-            Tuple of (reverse_phone_response, reverse_address_response) if cached,
+            Tuple of (reverse_phone_response, reverse_address_response, ai_analysis) if cached,
             None if not found
         """
         normalized_phone = self.normalize_phone(phone)
@@ -165,7 +165,8 @@ class CacheManager:
             
             return (
                 entry.get('reverse_phone', {}),
-                entry.get('reverse_address', {})
+                entry.get('reverse_address', {}),
+                entry.get('ai_analysis', {})
             )
         
         self.cache_misses += 1
@@ -173,14 +174,15 @@ class CacheManager:
         return None
     
     def store_lookup(self, phone: str, reverse_phone_response: Dict, 
-                    reverse_address_response: Dict) -> bool:
+                    reverse_address_response: Dict, ai_analysis: Dict = None) -> bool:
         """
-        Store successful API lookup results in cache
+        Store successful API lookup results and AI analysis in cache
         
         Args:
             phone: Phone number
             reverse_phone_response: Complete API response from phone lookup
             reverse_address_response: Complete API response from address lookup
+            ai_analysis: AI analysis results (optional)
         
         Returns:
             True if stored and saved successfully
@@ -196,16 +198,49 @@ class CacheManager:
             return False
         
         # Store in cache
-        self.cache_data['lookups'][normalized_phone] = {
+        cache_entry = {
             'timestamp': self._get_timestamp(),
             'reverse_phone': reverse_phone_response,
             'reverse_address': reverse_address_response
         }
         
+        # Add AI analysis if provided
+        if ai_analysis:
+            cache_entry['ai_analysis'] = ai_analysis
+        
+        self.cache_data['lookups'][normalized_phone] = cache_entry
+        
         logger.info(f"Cached lookup for {normalized_phone}")
         
         # Save to disk immediately
         return self.save_cache()
+    
+    def update_ai_analysis(self, phone: str, ai_analysis: Dict) -> bool:
+        """
+        Update AI analysis for an existing cache entry
+        
+        Args:
+            phone: Phone number
+            ai_analysis: AI analysis results
+        
+        Returns:
+            True if updated and saved successfully
+        """
+        normalized_phone = self.normalize_phone(phone)
+        
+        if not normalized_phone:
+            return False
+        
+        lookups = self.cache_data.get('lookups', {})
+        
+        if normalized_phone in lookups:
+            lookups[normalized_phone]['ai_analysis'] = ai_analysis
+            lookups[normalized_phone]['timestamp'] = self._get_timestamp()
+            
+            logger.info(f"Updated AI analysis for {normalized_phone}")
+            return self.save_cache()
+        
+        return False
     
     def clear_cache(self) -> Tuple[int, bool]:
         """

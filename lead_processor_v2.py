@@ -437,7 +437,7 @@ class LeadProcessor:
         if not force_refresh and self.use_cache and self.cache_manager:
             cached_lookup = self.cache_manager.get_cached_lookup(original_phone)
             if cached_lookup:
-                phone_data, address_data = cached_lookup
+                phone_data, address_data, _ = cached_lookup  # Ignore AI analysis in lead processor
                 used_cache = True
                 logger.info(f"Using permanent cache for {original_phone}")
         
