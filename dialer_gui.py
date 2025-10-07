@@ -1984,6 +1984,19 @@ class DialerGUI:
     
     def accumulate_phone_results(self, phone_data, original_person, trigger_ai=True):
         """Accumulate phone lookup results with existing data using comprehensive extraction"""
+        # Validate we're still on the same person
+        if self.current_person_idx >= len(self.original_data):
+            logger.warning("Invalid person index in accumulate_phone_results")
+            return
+        
+        current_person = self.original_data[self.current_person_idx]
+        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        original_phone = self.lead_processor.clean_phone(original_person.get('phone', ''))
+        
+        if current_phone != original_phone:
+            logger.warning(f"Phone mismatch in accumulate_phone_results: current={current_phone}, original={original_phone}")
+            return
+        
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
             results = self.process_lookup_data(original_person, phone_data, None)
@@ -2060,6 +2073,19 @@ class DialerGUI:
     
     def accumulate_address_results(self, address_data, original_person, trigger_ai=True):
         """Accumulate address lookup results with existing data using comprehensive extraction"""
+        # Validate we're still on the same person
+        if self.current_person_idx >= len(self.original_data):
+            logger.warning("Invalid person index in accumulate_address_results")
+            return
+        
+        current_person = self.original_data[self.current_person_idx]
+        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        original_phone = self.lead_processor.clean_phone(original_person.get('phone', ''))
+        
+        if current_phone != original_phone:
+            logger.warning(f"Phone mismatch in accumulate_address_results: current={current_phone}, original={original_phone}")
+            return
+        
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
             results = self.process_lookup_data(original_person, None, address_data)
@@ -3682,6 +3708,9 @@ class DialerGUI:
             )
             
             if ai_results:
+                # Add original_phone to results for validation
+                ai_results['original_phone'] = original_phone
+                ai_results['original_name'] = original_name
                 self.update_status("AI analysis complete", self.colors['success'])
                 return ai_results
             else:
@@ -3747,7 +3776,11 @@ class DialerGUI:
         if not self.ai_results:
             tk.Label(
                 scroll_frame,
-                text=dy=50)
+                text="No AI Analysis Available",
+                font=('Arial', 14, 'bold'),
+                bg='white',
+                fg='#999'
+            ).pack(pady=50)
             
             tk.Label(
                 scroll_frame,
@@ -3757,6 +3790,28 @@ class DialerGUI:
                 fg='#666'
             ).pack(pady=10)
             return
+        
+        # Additional validation: Check if AI results have original_phone field and it matches
+        if self.ai_results.get('original_phone'):
+            ai_phone = self.lead_processor.clean_phone(self.ai_results.get('original_phone', ''))
+            if ai_phone != current_phone:
+                logger.warning(f"AI results phone mismatch: AI={ai_phone}, Current={current_phone}")
+                tk.Label(
+                    scroll_frame,
+                    text="⚠️ AI Analysis Mismatch",
+                    font=('Arial', 14, 'bold'),
+                    bg='white',
+                    fg=self.colors['danger']
+                ).pack(pady=50)
+                
+                tk.Label(
+                    scroll_frame,
+                    text="AI analysis is for a different person. Please wait for analysis to complete.",
+                    font=('Arial', 10),
+                    bg='white',
+                    fg='#666'
+                ).pack(pady=10)
+                return
         
         # Display AI results
         padding = {'padx': 15, 'pady': 8}
