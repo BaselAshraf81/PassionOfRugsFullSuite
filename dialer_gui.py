@@ -4022,13 +4022,30 @@ class DialerGUI:
         
         # Current address
         if current_address:
+            address_frame = tk.Frame(details_frame, bg='#f0f8ff')
+            address_frame.pack(anchor='w', pady=(2, 0))
+            
             tk.Label(
-                details_frame,
+                address_frame,
                 text=f"📍 {current_address}",
                 font=('Arial', 8),
                 bg='#f0f8ff',
                 fg='#666'
-            ).pack(anchor='w', pady=(2, 0))
+            ).pack(side=tk.LEFT)
+            
+            # Google search button for address
+            tk.Button(
+                address_frame,
+                text="🔍",
+                command=lambda a=current_address: self.google_search_specific_address(a),
+                font=('Arial', 7),
+                bg=self.colors['secondary'],
+                fg='white',
+                padx=3,
+                pady=0,
+                cursor='hand2',
+                relief=tk.FLAT
+            ).pack(side=tk.LEFT, padx=3)
         
         # Phone numbers section
         if all_phone_numbers:
