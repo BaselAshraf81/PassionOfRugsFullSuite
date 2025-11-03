@@ -2223,15 +2223,19 @@ class DialerGUI:
         ).pack()
     
     def start_preloading_next_person(self):
-        """Start preloading the next person's data in background with proper validation"""
-        next_idx = self.current_person_idx + 1
-        if next_idx < len(self.original_data):
-            # Start background thread to preload next person
-            threading.Thread(
-                target=self.preload_person_data,
-                args=(next_idx,),
-                daemon=True
-            ).start()
+        """Start preloading the next 5 persons' data in background with proper validation"""
+        # Preload next 5 persons
+        for i in range(1, 6):
+            next_idx = self.current_person_idx + i
+            if next_idx < len(self.original_data):
+                # Start background thread to preload each person
+                threading.Thread(
+                    target=self.preload_person_data,
+                    args=(next_idx,),
+                    daemon=True
+                ).start()
+            else:
+                break  # Stop if we've reached the end of the data
     
     def preload_person_data(self, person_idx):
         """Preload person data in background thread using existing cache-checking logic"""
