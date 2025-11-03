@@ -197,6 +197,15 @@ class CacheManager:
             logger.info(f"Skipping cache for {normalized_phone} - no data to cache")
             return False
         
+        # Validate that data is JSON-serializable before caching
+        try:
+            # Test serialization of phone and address responses
+            json.dumps(reverse_phone_response)
+            json.dumps(reverse_address_response)
+        except (TypeError, ValueError) as e:
+            logger.error(f"Skipping cache for {normalized_phone} - data is not JSON-serializable: {e}")
+            return False
+        
         # Store in cache
         cache_entry = {
             'timestamp': self._get_timestamp(),
@@ -204,9 +213,14 @@ class CacheManager:
             'reverse_address': reverse_address_response
         }
         
-        # Add AI analysis if provided
+        # Add AI analysis if provided and validate it's JSON-serializable
         if ai_analysis:
-            cache_entry['ai_analysis'] = ai_analysis
+            try:
+                json.dumps(ai_analysis)
+                cache_entry['ai_analysis'] = ai_analysis
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping AI analysis cache for {normalized_phone} - invalid JSON format: {e}")
+                # Still cache the phone/address data, just skip the AI analysis
         
         self.cache_data['lookups'][normalized_phone] = cache_entry
         
@@ -230,6 +244,14 @@ class CacheManager:
         
         if not normalized_phone:
             return False
+        
+        # Validate AI analysis is JSON-serializable before caching
+        if ai_analysis:
+            try:
+                json.dumps(ai_analysis)
+            except (TypeError, ValueError) as e:
+                logger.error(f"Skipping AI analysis update for {normalized_phone} - invalid JSON format: {e}")
+                return False
         
         lookups = self.cache_data.get('lookups', {})
         
