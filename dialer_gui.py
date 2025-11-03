@@ -4111,7 +4111,7 @@ class DialerGUI:
         tk.Button(
             buttons_frame,
             text="Copy",
-            command=lambda: self.copy_to_clipboard(phone),
+            command=lambda p=phone: self._copy_to_clipboard(p),
             font=('Arial', 8),
             bg=self.colors['secondary'],
             fg='white',
@@ -4364,7 +4364,7 @@ class DialerGUI:
             return
         
         if not self.cloudtalk_api or not self.agent_id:
-            self.copy_to_clipboard(phone)
+            self._copy_to_clipboard(phone)
             self.update_status("CloudTalk not configured - phone number copied", self.colors['warning'])
             return
         
