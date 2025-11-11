@@ -159,9 +159,12 @@ class DialerGUI:
             'openai_api_key': ''
         }
         
-        # AI data
+        # AI data with synchronization
         self.ai_results = None
+        self.ai_results_lock = threading.Lock()
+        self.ai_results_person_idx = None  # Track which person AI results belong to
         self.ai_correction_log = []
+        self.preloaded_ai_results = {}  # Store preloaded AI results by phone
         
         # Call history
         self.call_history = []
@@ -1045,6 +1048,9 @@ class DialerGUI:
         self.results_notebook = ttk.Notebook(result_frame)
         self.results_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         
+        # Bind tab change event for data synchronization
+        self.results_notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
+        
         # Tab 1: AI Overview (Default tab)
         self.ai_tab = tk.Frame(self.results_notebook, bg='white')
         self.results_notebook.add(self.ai_tab, text="AI Overview & Filtering")
@@ -1562,12 +1568,41 @@ class DialerGUI:
         if index < 0 or index >= len(self.original_data):
             return
         
+        # CRITICAL: Clear AI results BEFORE changing person index (atomic operation)
+        with self.ai_results_lock:
+            self.ai_results = None
+            self.ai_results_person_idx = None
+        
         self.current_person_idx = index
         person = self.original_data[index]
         
-        # Clear AI results for new person
-        self.ai_results = None
+        # Clear AI tab immediately
         self.clear_ai_tab()
+        
+        # Clean up stale preloaded AI results (keep only next 5 persons)
+        if hasattr(self, 'preloaded_ai_results'):
+            original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
+            valid_indices = set(range(index, min(index + 6, len(self.original_data))))
+            stale_phones = []
+            
+            for phone, data in list(self.preloaded_ai_results.items()):
+                # Check if this preloaded data is for a person we might visit
+                is_valid = False
+                for valid_idx in valid_indices:
+                    if valid_idx < len(self.original_data):
+                        valid_person = self.original_data[valid_idx]
+                        valid_phone = self.lead_processor.clean_phone(valid_person.get('phone', ''))
+                        if phone == valid_phone:
+                            is_valid = True
+                            break
+                
+                if not is_valid:
+                    stale_phones.append(phone)
+            
+            # Remove stale entries
+            for phone in stale_phones:
+                del self.preloaded_ai_results[phone]
+                logger.info(f"Cleaned up stale preloaded AI for {phone}")
         
         # Start preloading next person in background (with proper validation)
         self.start_preloading_next_person()
@@ -2180,43 +2215,122 @@ class DialerGUI:
             self.root.after(0, lambda: self.update_status("AI analysis error", self.colors['danger']))
     
     def _update_ai_results(self, ai_results, original_phone, person_idx):
-        """Update AI results on main thread - ONLY if still viewing this person"""
-        # Validate we're still on the same person
-        if self.current_person_idx != person_idx:
-            logger.info(f"Skipping AI update - user navigated away (was {person_idx}, now {self.current_person_idx})")
-            return
-        
-        # Double-check the phone number matches current person
-        if self.current_person_idx < len(self.original_data):
-            current_person = self.original_data[self.current_person_idx]
-            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
-            if current_phone != original_phone:
-                logger.info(f"Skipping AI update - phone mismatch")
+        """Update AI results on main thread with atomic validation - ONLY if still viewing this person"""
+        # Atomic check and update using lock to prevent race conditions
+        with self.ai_results_lock:
+            # Validate we're still on the same person
+            if self.current_person_idx != person_idx:
+                logger.info(f"Skipping AI update - user navigated away (was {person_idx}, now {self.current_person_idx})")
                 return
+            
+            # Double-check the phone number matches current person
+            if self.current_person_idx < len(self.original_data):
+                current_person = self.original_data[self.current_person_idx]
+                current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+                if current_phone != original_phone:
+                    logger.info(f"Skipping AI update - phone mismatch (current={current_phone}, ai={original_phone})")
+                    return
+            
+            # Safe to update - atomic operation
+            self.ai_results = ai_results
+            self.ai_results_person_idx = person_idx
+            logger.info(f"AI results updated for person {person_idx} ({original_phone})")
         
-        # Safe to update UI
-        self.ai_results = ai_results
+        # Update UI outside lock (UI operations should not be locked)
         self.show_ai_tab(self.ai_tab)
         self.update_status("AI analysis complete", self.colors['success'])
     
-    def clear_ai_tab(self):
-        """Clear the AI tab content"""
-        # Clear existing content
-        for widget in self.ai_tab.winfo_children():
-            widget.destroy()
-        
-        # Show "Loading..." or "No Analysis" message
+    def _show_mismatch_warning(self, parent_frame, message="AI analysis is for a different person"):
+        """Show mismatch warning in AI tab"""
         tk.Label(
-            self.ai_tab,
-            text="No AI Analysis Available",
+            parent_frame,
+            text="⚠️ AI Analysis Mismatch",
+            font=('Arial', 14, 'bold'),
+            bg='white',
+            fg=self.colors['danger']
+        ).pack(pady=50)
+        
+        tk.Label(
+            parent_frame,
+            text=message,
+            font=('Arial', 10),
+            bg='white',
+            fg='#666',
+            wraplength=500,
+            justify='center'
+        ).pack(pady=10)
+        
+        tk.Label(
+            parent_frame,
+            text="Please wait for the correct analysis to complete, or navigate to another person.",
+            font=('Arial', 9, 'italic'),
+            bg='white',
+            fg='#999',
+            wraplength=500,
+            justify='center'
+        ).pack(pady=5)
+    
+    def _show_no_ai_message(self, parent_frame, title="No AI Analysis Available"):
+        """Show no AI message in AI tab"""
+        tk.Label(
+            parent_frame,
+            text=title,
             font=('Arial', 14, 'bold'),
             bg='white',
             fg='#999'
         ).pack(pady=50)
         
         tk.Label(
-            self.ai_tab,
+            parent_frame,
             text="AI analysis will appear here after API lookups complete",
+            font=('Arial', 10),
+            bg='white',
+            fg='#666'
+        ).pack(pady=10)
+    
+    def on_tab_changed(self, event):
+        """Sync data when user switches between tabs"""
+        try:
+            current_tab = self.results_notebook.index(self.results_notebook.select())
+            
+            if current_tab == 0:  # AI tab
+                # Sync from Standard View to AI tab
+                if hasattr(self, 'ai_notes_text') and hasattr(self, 'notes_text'):
+                    content = self.notes_text.get('1.0', tk.END)
+                    self.ai_notes_text.delete('1.0', tk.END)
+                    self.ai_notes_text.insert('1.0', content)
+                    logger.debug("Synced notes from Standard View to AI tab")
+            elif current_tab == 1:  # Standard View tab
+                # Sync from AI tab to Standard View
+                if hasattr(self, 'ai_notes_text') and hasattr(self, 'notes_text'):
+                    content = self.ai_notes_text.get('1.0', tk.END)
+                    self.notes_text.delete('1.0', tk.END)
+                    self.notes_text.insert('1.0', content)
+                    logger.debug("Synced notes from AI tab to Standard View")
+        except Exception as e:
+            logger.error(f"Error syncing tabs: {e}")
+    
+    def clear_ai_tab(self):
+        """Clear the AI tab content and show loading state"""
+        # Clear existing content
+        for widget in self.ai_tab.winfo_children():
+            widget.destroy()
+        
+        # Show loading state
+        loading_frame = tk.Frame(self.ai_tab, bg='white')
+        loading_frame.pack(expand=True)
+        
+        tk.Label(
+            loading_frame,
+            text="⏳ AI Analysis in Progress...",
+            font=('Arial', 14, 'bold'),
+            bg='white',
+            fg=self.colors['secondary']
+        ).pack(pady=20)
+        
+        tk.Label(
+            loading_frame,
+            text="Please wait while AI analyzes the data",
             font=('Arial', 10),
             bg='white',
             fg='#666'
@@ -3691,7 +3805,7 @@ class DialerGUI:
 
 
     def process_ai_analysis(self, original_data, phone_response, address_response):
-        """Process AI analysis for current person"""
+        """Process AI analysis for current person with metadata for validation"""
         if not self.ai_assistant or not self.settings.get('ai_enabled'):
             return None
         
@@ -3712,9 +3826,19 @@ class DialerGUI:
             )
             
             if ai_results:
-                # Add original_phone to results for validation
-                ai_results['original_phone'] = original_phone
+                # Add metadata for validation (CRITICAL for preventing data mismatch)
+                ai_results['_metadata'] = {
+                    'person_idx': self.current_person_idx,
+                    'original_phone': self.lead_processor.clean_phone(original_phone),
+                    'original_name': original_name,
+                    'timestamp': datetime.datetime.now().isoformat()
+                }
+                
+                # Also add to root level for backward compatibility
+                ai_results['original_phone'] = self.lead_processor.clean_phone(original_phone)
                 ai_results['original_name'] = original_name
+                
+                logger.info(f"AI analysis complete for person {self.current_person_idx} ({original_name})")
                 self.update_status("AI analysis complete", self.colors['success'])
                 return ai_results
             else:
@@ -3726,10 +3850,11 @@ class DialerGUI:
             return None
     
     def show_ai_tab(self, parent_frame):
-        """Create and populate AI Overview tab - validates AI results match current person"""
+        """Create and populate AI Overview tab with strict validation - ensures correct person data"""
         # Validate we have a valid person index
         if self.current_person_idx < 0 or self.current_person_idx >= len(self.original_data):
             logger.warning(f"Invalid person index in show_ai_tab: {self.current_person_idx}")
+            self._show_no_ai_message(parent_frame, "Invalid person index")
             return
         
         # Clear existing content
@@ -3772,11 +3897,7 @@ class DialerGUI:
             ).pack(pady=10)
             return
         
-        # Validate AI results match current person
-        current_person = self.original_data[self.current_person_idx]
-        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
-        
-        # Check if AI results exist and validate they're for the current person
+        # Validate AI results exist
         if not self.ai_results:
             tk.Label(
                 scroll_frame,
@@ -3795,27 +3916,44 @@ class DialerGUI:
             ).pack(pady=10)
             return
         
-        # Additional validation: Check if AI results have original_phone field and it matches
-        if self.ai_results.get('original_phone'):
-            ai_phone = self.lead_processor.clean_phone(self.ai_results.get('original_phone', ''))
-            if ai_phone != current_phone:
-                logger.warning(f"AI results phone mismatch: AI={ai_phone}, Current={current_phone}")
-                tk.Label(
-                    scroll_frame,
-                    text="⚠️ AI Analysis Mismatch",
-                    font=('Arial', 14, 'bold'),
-                    bg='white',
-                    fg=self.colors['danger']
-                ).pack(pady=50)
-                
-                tk.Label(
-                    scroll_frame,
-                    text="AI analysis is for a different person. Please wait for analysis to complete.",
-                    font=('Arial', 10),
-                    bg='white',
-                    fg='#666'
-                ).pack(pady=10)
+        # CRITICAL: Validate AI results match current person
+        current_person = self.original_data[self.current_person_idx]
+        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        
+        # Check metadata first (most reliable validation method)
+        metadata = self.ai_results.get('_metadata', {})
+        if metadata:
+            ai_person_idx = metadata.get('person_idx')
+            ai_phone = metadata.get('original_phone')
+            
+            # Strict validation using person index
+            if ai_person_idx is not None and ai_person_idx != self.current_person_idx:
+                logger.warning(f"AI results person_idx mismatch: AI={ai_person_idx}, Current={self.current_person_idx}")
+                self._show_mismatch_warning(scroll_frame, f"AI analysis is for person #{ai_person_idx + 1}, currently viewing person #{self.current_person_idx + 1}")
                 return
+            
+            # Additional validation using phone number
+            if ai_phone and ai_phone != current_phone:
+                logger.warning(f"AI results phone mismatch: AI={ai_phone}, Current={current_phone}")
+                self._show_mismatch_warning(scroll_frame, "AI analysis phone number doesn't match current person")
+                return
+        else:
+            # Fallback: check original_phone field (legacy validation)
+            ai_phone = self.ai_results.get('original_phone')
+            if ai_phone:
+                ai_phone = self.lead_processor.clean_phone(ai_phone)
+                if ai_phone != current_phone:
+                    logger.warning(f"AI results phone mismatch (legacy check): AI={ai_phone}, Current={current_phone}")
+                    self._show_mismatch_warning(scroll_frame, "AI analysis is for a different person")
+                    return
+            else:
+                # No validation possible - show warning
+                logger.warning("AI results have no metadata - cannot validate person match")
+                self._show_mismatch_warning(scroll_frame, "Cannot validate AI results (missing metadata)")
+                return
+        
+        # Validation passed - log success
+        logger.info(f"AI tab validation passed for person {self.current_person_idx} ({current_phone})")
         
         # Display AI results
         padding = {'padx': 15, 'pady': 8}
