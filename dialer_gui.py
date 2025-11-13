@@ -1618,7 +1618,11 @@ class DialerGUI:
         
         self.orig_labels['Original Phone'].config(state='normal')
         self.orig_labels['Original Phone'].delete(0, tk.END)
-        self.orig_labels['Original Phone'].insert(0, person.get('phone', ''))
+        # Format phone number properly (handle float from Excel)
+        phone_value = person.get('phone', '')
+        if isinstance(phone_value, float):
+            phone_value = str(int(phone_value))
+        self.orig_labels['Original Phone'].insert(0, str(phone_value))
         self.orig_labels['Original Phone'].config(state='readonly')
         
         self.orig_labels['Original Address'].config(state='normal')
@@ -1676,13 +1680,23 @@ class DialerGUI:
                         if has_results:
                             # Priority: preloaded > cached > new analysis
                             if preloaded_ai:
-                                # Use preloaded AI (from background preloading)
-                                self.ai_results = preloaded_ai
+                                # Use preloaded AI (from background preloading) - atomic assignment
+                                # Update metadata to reflect current person
+                                if '_metadata' in preloaded_ai:
+                                    preloaded_ai['_metadata']['person_idx'] = index
+                                with self.ai_results_lock:
+                                    self.ai_results = preloaded_ai
+                                    self.ai_results_person_idx = index
                                 self.show_ai_tab(self.ai_tab)
                                 self.update_status("Data loaded instantly (preloaded AI) - no wait time!", self.colors['success'])
                             elif cached_ai_analysis:
-                                # Use cached AI analysis
-                                self.ai_results = cached_ai_analysis
+                                # Use cached AI analysis - atomic assignment
+                                # Update metadata to reflect current person (cached data may have old person_idx)
+                                if '_metadata' in cached_ai_analysis:
+                                    cached_ai_analysis['_metadata']['person_idx'] = index
+                                with self.ai_results_lock:
+                                    self.ai_results = cached_ai_analysis
+                                    self.ai_results_person_idx = index
                                 self.show_ai_tab(self.ai_tab)
                                 self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
                             elif phone_data or address_data:
@@ -1819,9 +1833,20 @@ class DialerGUI:
                 if has_results and (phone_data or address_data):
                     # Use cached AI analysis if available
                     if cached_ai_analysis:
-                        self.ai_results = cached_ai_analysis
-                        self.root.after(0, lambda: self.show_ai_tab(self.ai_tab))
-                        self.root.after(0, lambda: self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success']))
+                        # Atomic assignment with validation
+                        person_idx = self.current_person_idx
+                        def update_cached_ai():
+                            with self.ai_results_lock:
+                                # Validate we're still on the same person
+                                if self.current_person_idx == person_idx:
+                                    # Update metadata to reflect current person
+                                    if '_metadata' in cached_ai_analysis:
+                                        cached_ai_analysis['_metadata']['person_idx'] = person_idx
+                                    self.ai_results = cached_ai_analysis
+                                    self.ai_results_person_idx = person_idx
+                                    self.show_ai_tab(self.ai_tab)
+                                    self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
+                        self.root.after(0, update_cached_ai)
                     else:
                         # Run AI analysis in background only if not cached
                         # Get person index from current_person_idx
@@ -2026,10 +2051,15 @@ class DialerGUI:
         
         current_person = self.original_data[self.current_person_idx]
         current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        current_name = current_person.get('name', '').strip()
         original_phone = self.lead_processor.clean_phone(original_person.get('phone', ''))
+        original_name = original_person.get('name', '').strip()
         
-        if current_phone != original_phone:
-            logger.warning(f"Phone mismatch in accumulate_phone_results: current={current_phone}, original={original_phone}")
+        # Validate BOTH phone AND name
+        if current_phone != original_phone or current_name != original_name:
+            logger.warning(f"Person mismatch in accumulate_phone_results:")
+            logger.warning(f"  Current: {current_name} ({current_phone})")
+            logger.warning(f"  Original: {original_name} ({original_phone})")
             return
         
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
@@ -2098,9 +2128,19 @@ class DialerGUI:
             
             # Run AI analysis if we have any accumulated data with results
             if has_results and (phone_api_data or address_api_data):
-                self.ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
-                # Update AI tab
-                self.show_ai_tab(self.ai_tab)
+                # Process AI and update atomically
+                ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
+                if ai_results:
+                    with self.ai_results_lock:
+                        # Validate we're still on the same person
+                        if self.current_person_idx < len(self.original_data):
+                            current_person = self.original_data[self.current_person_idx]
+                            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+                            if current_phone == original_phone:
+                                self.ai_results = ai_results
+                                self.ai_results_person_idx = self.current_person_idx
+                                # Update AI tab
+                                self.show_ai_tab(self.ai_tab)
         
         # AI tab is now default (tab 0) - keep it selected
         
@@ -2115,10 +2155,15 @@ class DialerGUI:
         
         current_person = self.original_data[self.current_person_idx]
         current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        current_name = current_person.get('name', '').strip()
         original_phone = self.lead_processor.clean_phone(original_person.get('phone', ''))
+        original_name = original_person.get('name', '').strip()
         
-        if current_phone != original_phone:
-            logger.warning(f"Phone mismatch in accumulate_address_results: current={current_phone}, original={original_phone}")
+        # Validate BOTH phone AND name
+        if current_phone != original_phone or current_name != original_name:
+            logger.warning(f"Person mismatch in accumulate_address_results:")
+            logger.warning(f"  Current: {current_name} ({current_phone})")
+            logger.warning(f"  Original: {original_name} ({original_phone})")
             return
         
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
@@ -2189,9 +2234,19 @@ class DialerGUI:
             
             # Run AI analysis if we have any accumulated data with results
             if has_results and (phone_api_data or address_api_data):
-                self.ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
-                # Update AI tab
-                self.show_ai_tab(self.ai_tab)
+                # Process AI and update atomically
+                ai_results = self.process_ai_analysis(original_person, phone_api_data, address_api_data)
+                if ai_results:
+                    with self.ai_results_lock:
+                        # Validate we're still on the same person
+                        if self.current_person_idx < len(self.original_data):
+                            current_person = self.original_data[self.current_person_idx]
+                            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+                            if current_phone == original_phone:
+                                self.ai_results = ai_results
+                                self.ai_results_person_idx = self.current_person_idx
+                                # Update AI tab
+                                self.show_ai_tab(self.ai_tab)
         
         # AI tab is now default (tab 0) - keep it selected
         
@@ -2238,6 +2293,10 @@ class DialerGUI:
         
         # Update UI outside lock (UI operations should not be locked)
         self.show_ai_tab(self.ai_tab)
+        
+        # Refresh Standard View display to show any accumulated data
+        self.display_current_result()
+        
         self.update_status("AI analysis complete", self.colors['success'])
     
     def _show_mismatch_warning(self, parent_frame, message="AI analysis is for a different person"):
@@ -2610,6 +2669,29 @@ class DialerGUI:
         if self.current_person_idx < 0 or self.current_person_idx >= len(self.original_data):
             logger.warning(f"Invalid person index: {self.current_person_idx}")
             return
+        
+        # CRITICAL: Validate current_results match current person (BOTH phone AND name)
+        if self.current_results:
+            current_person = self.original_data[self.current_person_idx]
+            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+            current_name = current_person.get('name', '').strip()
+            
+            # Check if results match current person (using first result as reference)
+            result_phone = self.current_results[0].get('original_phone', '')
+            result_name = self.current_results[0].get('original_name', '').strip()
+            
+            # Validate BOTH phone AND name
+            if result_phone != current_phone or result_name != current_name:
+                logger.warning(f"Standard View results mismatch:")
+                logger.warning(f"  Result: {result_name} ({result_phone})")
+                logger.warning(f"  Current: {current_name} ({current_phone})")
+                logger.warning(f"Clearing mismatched results for person {self.current_person_idx}")
+                # Clear mismatched results
+                self.current_results = []
+                self.current_result_idx = 0
+                self.current_phone_idx = 0
+            else:
+                logger.debug(f"Standard View results validated for person {self.current_person_idx} ({current_name}, {current_phone})")
         
         if not self.current_results:
             self.result_counter_label.config(text="No results found")
@@ -3923,27 +4005,37 @@ class DialerGUI:
         # Check metadata first (most reliable validation method)
         metadata = self.ai_results.get('_metadata', {})
         if metadata:
-            ai_person_idx = metadata.get('person_idx')
             ai_phone = metadata.get('original_phone')
+            ai_name = metadata.get('original_name', '').strip()
+            current_name = current_person.get('name', '').strip()
             
-            # Strict validation using person index
-            if ai_person_idx is not None and ai_person_idx != self.current_person_idx:
-                logger.warning(f"AI results person_idx mismatch: AI={ai_person_idx}, Current={self.current_person_idx}")
-                self._show_mismatch_warning(scroll_frame, f"AI analysis is for person #{ai_person_idx + 1}, currently viewing person #{self.current_person_idx + 1}")
-                return
+            # Validate BOTH phone AND name (person_idx can be stale from cache)
+            # When cached AI results are reused for different persons with same phone,
+            # the person_idx in metadata will be from the original person
+            phone_match = ai_phone == current_phone if ai_phone else True
+            name_match = ai_name == current_name if ai_name else True
             
-            # Additional validation using phone number
-            if ai_phone and ai_phone != current_phone:
-                logger.warning(f"AI results phone mismatch: AI={ai_phone}, Current={current_phone}")
-                self._show_mismatch_warning(scroll_frame, "AI analysis phone number doesn't match current person")
+            if not phone_match or not name_match:
+                logger.warning(f"AI results mismatch:")
+                logger.warning(f"  AI: {ai_name} ({ai_phone})")
+                logger.warning(f"  Current: {current_name} ({current_phone})")
+                self._show_mismatch_warning(scroll_frame, f"AI analysis is for {ai_name}, currently viewing {current_name}")
                 return
         else:
-            # Fallback: check original_phone field (legacy validation)
+            # Fallback: check original_phone and original_name fields (legacy validation)
             ai_phone = self.ai_results.get('original_phone')
+            ai_name = self.ai_results.get('original_name', '').strip()
+            current_name = current_person.get('name', '').strip()
+            
             if ai_phone:
                 ai_phone = self.lead_processor.clean_phone(ai_phone)
-                if ai_phone != current_phone:
-                    logger.warning(f"AI results phone mismatch (legacy check): AI={ai_phone}, Current={current_phone}")
+                phone_match = ai_phone == current_phone
+                name_match = ai_name == current_name if ai_name else True
+                
+                if not phone_match or not name_match:
+                    logger.warning(f"AI results mismatch (legacy check):")
+                    logger.warning(f"  AI: {ai_name} ({ai_phone})")
+                    logger.warning(f"  Current: {current_name} ({current_phone})")
                     self._show_mismatch_warning(scroll_frame, "AI analysis is for a different person")
                     return
             else:

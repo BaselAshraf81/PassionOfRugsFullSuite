@@ -133,13 +133,33 @@ Correct this address to match API requirements. Return ONLY valid JSON:
                 content = content[:-3]
             content = content.strip()
             
-            result = json.loads(content)
+            # Try to parse JSON
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as e:
+                # Try to repair incomplete JSON
+                logger.warning(f"JSON parse error, attempting repair: {e}")
+                last_brace = content.rfind('}')
+                if last_brace > 0:
+                    repaired = content[:last_brace + 1]
+                    try:
+                        result = json.loads(repaired)
+                        logger.info("Successfully repaired incomplete JSON")
+                    except:
+                        logger.error(f"Could not repair JSON")
+                        logger.error(f"Raw response was: '{raw_content[:500]}...'")
+                        return None
+                else:
+                    logger.error(f"No closing brace found in JSON")
+                    logger.error(f"Raw response was: '{raw_content[:500]}...'")
+                    return None
+            
             logger.info(f"AI address correction: {result.get('correction_reasoning', 'No reasoning')}")
             return result
             
         except json.JSONDecodeError as e:
             logger.error(f"AI returned invalid JSON: {e}")
-            logger.error(f"Raw response was: '{raw_content if 'raw_content' in locals() else 'No response'}'")
+            logger.error(f"Raw response was: '{raw_content[:500] if 'raw_content' in locals() else 'No response'}...'")
             return None
         except Exception as e:
             logger.error(f"AI address correction failed: {e}")
@@ -284,13 +304,37 @@ IMPORTANT: Include ALL persons found with ALL their phone numbers. Rank horizont
                 content = content[:-3]
             content = content.strip()
             
-            result = json.loads(content)
+            # Try to parse JSON
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as e:
+                # Try to repair incomplete JSON by finding the last complete object
+                logger.warning(f"JSON parse error, attempting repair: {e}")
+                
+                # Find the last complete closing brace
+                last_brace = content.rfind('}')
+                if last_brace > 0:
+                    # Try parsing up to the last brace
+                    repaired = content[:last_brace + 1]
+                    try:
+                        result = json.loads(repaired)
+                        logger.info("Successfully repaired incomplete JSON")
+                    except:
+                        # If that doesn't work, return None
+                        logger.error(f"Could not repair JSON")
+                        logger.error(f"Raw response was: '{raw_content[:500]}...'")
+                        return None
+                else:
+                    logger.error(f"No closing brace found in JSON")
+                    logger.error(f"Raw response was: '{raw_content[:500]}...'")
+                    return None
+            
             logger.info(f"AI filtering complete: {len(result.get('primary_matches', []))} primary matches")
             return result
             
         except json.JSONDecodeError as e:
             logger.error(f"AI returned invalid JSON: {e}")
-            logger.error(f"Raw response was: '{raw_content if 'raw_content' in locals() else 'No response'}'")
+            logger.error(f"Raw response was: '{raw_content[:500] if 'raw_content' in locals() else 'No response'}...'")
             return None
         except Exception as e:
             logger.error(f"AI filtering failed: {e}")
