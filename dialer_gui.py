@@ -166,6 +166,10 @@ class DialerGUI:
         self.ai_correction_log = []
         self.preloaded_ai_results = {}  # Store preloaded AI results by phone
         
+        # Preloading queue to avoid duplicate requests
+        self.preload_queue = set()  # Track which persons are being/have been preloaded
+        self.preload_lock = threading.Lock()  # Lock for queue access
+        
         # Call history
         self.call_history = []
         self.call_history_file = "call_history.json"
@@ -2396,19 +2400,39 @@ class DialerGUI:
         ).pack()
     
     def start_preloading_next_person(self):
-        """Start preloading the next 5 persons' data in background with proper validation"""
-        # Preload next 5 persons
-        for i in range(1, 6):
-            next_idx = self.current_person_idx + i
-            if next_idx < len(self.original_data):
-                # Start background thread to preload each person
-                threading.Thread(
-                    target=self.preload_person_data,
-                    args=(next_idx,),
-                    daemon=True
-                ).start()
-            else:
-                break  # Stop if we've reached the end of the data
+        """Start preloading the next persons' data in background with queue to avoid duplicates"""
+        # Calculate which persons need to be preloaded
+        # Person 1 → preload 2-6
+        # Person 2 → preload 7 (2-6 already queued)
+        # Person 3 → preload 8 (2-7 already queued)
+        
+        with self.preload_lock:
+            # Get current preload window (next 5 persons)
+            preload_start = self.current_person_idx + 1
+            preload_end = min(self.current_person_idx + 6, len(self.original_data))
+            
+            # Only preload persons not already in queue
+            for next_idx in range(preload_start, preload_end):
+                if next_idx not in self.preload_queue:
+                    # Add to queue
+                    self.preload_queue.add(next_idx)
+                    
+                    # Start background thread to preload this person
+                    threading.Thread(
+                        target=self.preload_person_data,
+                        args=(next_idx,),
+                        daemon=True
+                    ).start()
+                    
+                    logger.debug(f"Queued preload for person {next_idx + 1}")
+            
+            # Clean up queue - remove persons behind current position
+            # Keep persons in window [current, current+10] to handle backward navigation
+            cleanup_threshold = max(0, self.current_person_idx - 5)
+            persons_to_remove = [idx for idx in self.preload_queue if idx < cleanup_threshold]
+            for idx in persons_to_remove:
+                self.preload_queue.discard(idx)
+                logger.debug(f"Removed person {idx + 1} from preload queue (behind current position)")
     
     def preload_person_data(self, person_idx):
         """Preload person data in background thread using existing cache-checking logic"""
@@ -2448,7 +2472,7 @@ class DialerGUI:
                                 self.preload_ai_analysis(person, phone_data, address_data, original_phone)
                         return
             
-            # Not cached or empty cache, perform API lookups
+            # Not cached - make API calls based on auto settings
             auto_phone = self.settings.get('auto_phone_lookup', True)
             auto_address = self.settings.get('auto_address_lookup', True)
             
@@ -2456,11 +2480,12 @@ class DialerGUI:
             if auto_phone:
                 try:
                     phone_data = self.lead_processor.phone_lookup(original_phone)
+                    logger.info(f"Preloaded phone data for person {person_idx + 1}")
                 except Exception as e:
                     logger.error(f"Preload phone lookup error: {e}")
                     phone_data = None
             
-            # Address lookup with AI correction support
+            # Address lookup
             if auto_address:
                 try:
                     street = person.get('address', '')
@@ -2477,21 +2502,19 @@ class DialerGUI:
                         zip_code = parsed['zip'] or zip_code
                     
                     if any([street, city, state, zip_code]):
-                        # Use address_lookup with AI correction enabled
-                        enable_ai_correction = (self.settings.get('ai_enabled') and 
-                                              self.settings.get('ai_address_correction', True) and 
-                                              self.ai_assistant)
-                        
+                        # Simple address lookup without AI correction for preloading (faster)
                         result = self.lead_processor.address_lookup(
                             street, city, state, zip_code, 
-                            enable_ai_correction=enable_ai_correction
+                            enable_ai_correction=False  # Skip AI correction for preload speed
                         )
                         
-                        # Handle tuple return (result, correction_info)
+                        # Handle tuple return
                         if isinstance(result, tuple):
-                            address_data, correction_info = result
+                            address_data, _ = result
                         else:
                             address_data = result
+                        
+                        logger.info(f"Preloaded address data for person {person_idx + 1}")
                             
                 except Exception as e:
                     logger.error(f"Preload address lookup error: {e}")
@@ -2510,9 +2533,16 @@ class DialerGUI:
             if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
                 if phone_data or address_data:
                     self.preload_ai_analysis(person, phone_data, address_data, original_phone)
+            
+            # Mark as complete - keep in queue so we don't preload again
+            # Queue cleanup happens in start_preloading_next_person()
+            logger.info(f"Completed preload for person {person_idx + 1}")
                 
         except Exception as e:
             logger.error(f"Preload person data error: {e}")
+            # Remove from queue on error so it can be retried
+            with self.preload_lock:
+                self.preload_queue.discard(person_idx)
     
     def preload_ai_analysis(self, person, phone_data, address_data, original_phone):
         """Preload AI analysis in background and store in both memory and permanent cache"""
