@@ -8,6 +8,8 @@ import json
 import os
 import re
 import logging
+import threading
+import copy
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 from pathlib import Path
@@ -31,6 +33,7 @@ class CacheManager:
             "last_updated": self._get_timestamp(),
             "lookups": {}
         }
+        self._lock = threading.Lock()  # Thread safety for cache operations
         self.load_cache()
         
         # Statistics
@@ -105,20 +108,23 @@ class CacheManager:
     
     def save_cache(self) -> bool:
         """
-        Save cache to disk with atomic write
+        Save cache to disk with atomic write (thread-safe)
         
         Returns:
             True if saved successfully, False otherwise
         """
         try:
-            # Update timestamp
-            self.cache_data['last_updated'] = self._get_timestamp()
+            # Make a deep copy of cache data while holding the lock
+            # This prevents "dictionary changed size during iteration" errors
+            with self._lock:
+                self.cache_data['last_updated'] = self._get_timestamp()
+                cache_copy = copy.deepcopy(self.cache_data)
             
             # Atomic write: write to temp file, then rename
             temp_file = self.cache_file + '.tmp'
             
             with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(self.cache_data, f, indent=2, ensure_ascii=False)
+                json.dump(cache_copy, f, indent=2, ensure_ascii=False)
             
             # Rename temp file to actual cache file (atomic on most systems)
             if os.path.exists(self.cache_file):
@@ -222,7 +228,9 @@ class CacheManager:
                 logger.warning(f"Skipping AI analysis cache for {normalized_phone} - invalid JSON format: {e}")
                 # Still cache the phone/address data, just skip the AI analysis
         
-        self.cache_data['lookups'][normalized_phone] = cache_entry
+        # Thread-safe cache update
+        with self._lock:
+            self.cache_data['lookups'][normalized_phone] = cache_entry
         
         logger.info(f"Cached lookup for {normalized_phone}")
         
@@ -253,28 +261,30 @@ class CacheManager:
                 logger.error(f"Skipping AI analysis update for {normalized_phone} - invalid JSON format: {e}")
                 return False
         
-        lookups = self.cache_data.get('lookups', {})
-        
-        if normalized_phone in lookups:
-            lookups[normalized_phone]['ai_analysis'] = ai_analysis
-            lookups[normalized_phone]['timestamp'] = self._get_timestamp()
+        # Thread-safe cache update
+        with self._lock:
+            lookups = self.cache_data.get('lookups', {})
             
-            logger.info(f"Updated AI analysis for {normalized_phone}")
-            return self.save_cache()
+            if normalized_phone in lookups:
+                lookups[normalized_phone]['ai_analysis'] = ai_analysis
+                lookups[normalized_phone]['timestamp'] = self._get_timestamp()
+            else:
+                return False
         
-        return False
+        logger.info(f"Updated AI analysis for {normalized_phone}")
+        return self.save_cache()
     
     def clear_cache(self) -> Tuple[int, bool]:
         """
-        Clear all cached entries
+        Clear all cached entries (thread-safe)
         
         Returns:
             Tuple of (number of entries cleared, success)
         """
-        entry_count = len(self.cache_data.get('lookups', {}))
-        
-        self.cache_data['lookups'] = {}
-        self.cache_data['last_updated'] = self._get_timestamp()
+        with self._lock:
+            entry_count = len(self.cache_data.get('lookups', {}))
+            self.cache_data['lookups'] = {}
+            self.cache_data['last_updated'] = self._get_timestamp()
         
         success = self.save_cache()
         

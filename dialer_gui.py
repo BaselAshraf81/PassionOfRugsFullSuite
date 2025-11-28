@@ -391,6 +391,21 @@ class DialerGUI:
         self.output_file_entry.grid(row=row, column=1, sticky='ew', padx=10, pady=8)
         row += 1
         
+        # Starting row option
+        tk.Label(form, text="Start from Row:", font=('Arial', 9, 'bold'), bg=self.colors['white']).grid(
+            row=row, column=0, sticky='e', padx=10, pady=8
+        )
+        start_row_frame = tk.Frame(form, bg=self.colors['white'])
+        start_row_frame.grid(row=row, column=1, sticky='w', padx=10, pady=8)
+        
+        self.start_row_entry = tk.Entry(start_row_frame, font=('Arial', 9), width=8)
+        self.start_row_entry.insert(0, "1")
+        self.start_row_entry.pack(side=tk.LEFT)
+        
+        tk.Label(start_row_frame, text="  (Excel row number, 1 = first data row after header)", 
+                font=('Arial', 8, 'italic'), bg=self.colors['white'], fg='#666').pack(side=tk.LEFT, padx=5)
+        row += 1
+        
         # Separator
         ttk.Separator(form, orient='horizontal').grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
         row += 1
@@ -856,17 +871,41 @@ class DialerGUI:
         # Initialize cache
         self.excel_cache = ExcelCache(self.output_excel_file)
         
+        # Get starting row
+        start_row_str = self.start_row_entry.get().strip()
+        try:
+            start_row = int(start_row_str)
+            if start_row < 1:
+                start_row = 1
+        except ValueError:
+            start_row = 1
+        
+        # Convert to 0-based index (row 1 = index 0)
+        start_index = start_row - 1
+        
         # Load data
         try:
             df = pd.read_excel(self.input_excel_file)
             self.original_data = df.to_dict('records')
             
+            # Validate starting row
+            if start_index >= len(self.original_data):
+                messagebox.showerror("Error", 
+                    f"Starting row {start_row} is beyond the data range.\n"
+                    f"The file has {len(self.original_data)} data rows.\n"
+                    f"Please enter a row between 1 and {len(self.original_data)}.")
+                return
+            
             # Hide setup, show dialer
             setup_frame.destroy()
             self.show_dialer_screen()
             
-            # Load first person
-            self.load_person(0)
+            # Load person at starting row
+            self.load_person(start_index)
+            
+            # Show info if not starting from first row
+            if start_index > 0:
+                self.update_status(f"Started from row {start_row} (skipped {start_index} rows)", self.colors['secondary'])
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load Excel file: {str(e)}")
@@ -2381,19 +2420,31 @@ class DialerGUI:
             if current_tab == 0:  # AI tab
                 # Sync from Standard View to AI tab
                 if hasattr(self, 'ai_notes_text') and hasattr(self, 'notes_text'):
-                    content = self.notes_text.get('1.0', tk.END)
-                    self.ai_notes_text.delete('1.0', tk.END)
-                    self.ai_notes_text.insert('1.0', content)
-                    logger.debug("Synced notes from Standard View to AI tab")
+                    # Check if widgets still exist before accessing
+                    try:
+                        if self.ai_notes_text.winfo_exists() and self.notes_text.winfo_exists():
+                            content = self.notes_text.get('1.0', tk.END)
+                            self.ai_notes_text.delete('1.0', tk.END)
+                            self.ai_notes_text.insert('1.0', content)
+                            logger.debug("Synced notes from Standard View to AI tab")
+                    except tk.TclError:
+                        pass  # Widget was destroyed, skip sync
             elif current_tab == 1:  # Standard View tab
                 # Sync from AI tab to Standard View
                 if hasattr(self, 'ai_notes_text') and hasattr(self, 'notes_text'):
-                    content = self.ai_notes_text.get('1.0', tk.END)
-                    self.notes_text.delete('1.0', tk.END)
-                    self.notes_text.insert('1.0', content)
-                    logger.debug("Synced notes from AI tab to Standard View")
+                    # Check if widgets still exist before accessing
+                    try:
+                        if self.ai_notes_text.winfo_exists() and self.notes_text.winfo_exists():
+                            content = self.ai_notes_text.get('1.0', tk.END)
+                            self.notes_text.delete('1.0', tk.END)
+                            self.notes_text.insert('1.0', content)
+                            logger.debug("Synced notes from AI tab to Standard View")
+                    except tk.TclError:
+                        pass  # Widget was destroyed, skip sync
         except Exception as e:
-            logger.error(f"Error syncing tabs: {e}")
+            # Only log if it's not a widget destruction error
+            if "invalid command name" not in str(e):
+                logger.error(f"Error syncing tabs: {e}")
     
     def clear_ai_tab(self):
         """Clear the AI tab content and show loading state"""
