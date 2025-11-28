@@ -33,4 +33,7 @@ tkinterweb>=3.0.0
 # AI features (OpenAI GPT-5 nano - cheapest option: $0.025/$0.20 per 1M tokens)
 openai>=1.0.0
 
+# Cross-platform file locking for cache safety
+portalocker>=2.0.0
+
 # Note: All standard library modules are included with Python installation

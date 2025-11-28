@@ -14,6 +14,13 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 from pathlib import Path
 
+# Try to import portalocker for cross-platform file locking
+try:
+    import portalocker
+    HAS_PORTALOCKER = True
+except ImportError:
+    HAS_PORTALOCKER = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +80,7 @@ class CacheManager:
     
     def load_cache(self) -> bool:
         """
-        Load cache from disk
+        Load cache from disk with file-level locking
         
         Returns:
             True if cache loaded successfully, False otherwise
@@ -84,8 +91,17 @@ class CacheManager:
             return False
         
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
-                loaded_data = json.load(f)
+            # Use file-level locking if portalocker is available
+            if HAS_PORTALOCKER:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    portalocker.lock(f, portalocker.LOCK_SH)  # Shared lock for reading
+                    try:
+                        loaded_data = json.load(f)
+                    finally:
+                        portalocker.unlock(f)
+            else:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    loaded_data = json.load(f)
             
             # Validate cache structure
             if not isinstance(loaded_data, dict) or 'lookups' not in loaded_data:
@@ -108,7 +124,7 @@ class CacheManager:
     
     def save_cache(self) -> bool:
         """
-        Save cache to disk with atomic write (thread-safe)
+        Save cache to disk with atomic write (thread-safe) and file-level locking
         
         Returns:
             True if saved successfully, False otherwise
@@ -123,8 +139,17 @@ class CacheManager:
             # Atomic write: write to temp file, then rename
             temp_file = self.cache_file + '.tmp'
             
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_copy, f, indent=2, ensure_ascii=False)
+            # Use file-level locking if portalocker is available
+            if HAS_PORTALOCKER:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    portalocker.lock(f, portalocker.LOCK_EX)
+                    try:
+                        json.dump(cache_copy, f, indent=2, ensure_ascii=False)
+                    finally:
+                        portalocker.unlock(f)
+            else:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(cache_copy, f, indent=2, ensure_ascii=False)
             
             # Rename temp file to actual cache file (atomic on most systems)
             if os.path.exists(self.cache_file):

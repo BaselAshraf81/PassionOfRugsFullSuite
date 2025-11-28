@@ -464,7 +464,12 @@ class LeadProcessor:
                 zip_code = parsed['zip'] or zip_code
                 logger.info(f"Parsed -> Street: {street}, City: {city}, State: {state}, ZIP: {zip_code}")
             
-            address_data = self.address_lookup(street, city, state, zip_code)
+            result = self.address_lookup(street, city, state, zip_code)
+            # Handle tuple return (address_data, correction_info)
+            if isinstance(result, tuple):
+                address_data, _ = result
+            else:
+                address_data = result
             time.sleep(0.1)
             
             # Store in permanent cache if we have data (always store on force refresh to update cache)

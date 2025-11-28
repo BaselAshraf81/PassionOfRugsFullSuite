@@ -70,6 +70,10 @@ class CloudTalkAPI:
                 return {"success": False, "message": "Agent already on a call"}
             else:
                 return {"success": False, "message": f"Call failed - please try again"}
+        except requests.exceptions.Timeout:
+            return {"success": False, "message": "Request timed out"}
+        except requests.exceptions.ConnectionError:
+            return {"success": False, "message": "Network connection error"}
         except requests.exceptions.RequestException as e:
             return {"success": False, "message": f"Connection error: {str(e)}"}
 
@@ -90,6 +94,9 @@ class ExcelCache:
             df = pd.read_excel(self.output_file)
             for _, row in df.iterrows():
                 orig_phone = str(row.get('Original Phone', '')).strip()
+                # Skip invalid phone entries
+                if not orig_phone or orig_phone == 'nan' or orig_phone == 'None':
+                    continue
                 if orig_phone:
                     # Split phones by comma, addresses by pipe
                     phones_raw = str(row.get('New Phone', ''))
@@ -115,7 +122,7 @@ class ExcelCache:
                         'address_lookup_failed': address_failed
                     }
         except Exception as e:
-            print(f"Error loading cache: {e}")
+            logger.error(f"Error loading cache: {e}")
     
     def get(self, original_phone: str) -> Optional[Dict]:
         return self.cache.get(original_phone)
@@ -1627,8 +1634,16 @@ class DialerGUI:
         # Clear AI tab immediately
         self.clear_ai_tab()
         
-        # Clean up stale preloaded AI results (keep only next 5 persons)
+        # Clean up stale preloaded AI results with size limit (max 20 entries, keep 10 most recent)
         if hasattr(self, 'preloaded_ai_results'):
+            # First, enforce size limit to prevent memory leaks
+            if len(self.preloaded_ai_results) > 20:
+                sorted_keys = sorted(self.preloaded_ai_results.keys())
+                for key in sorted_keys[:-10]:
+                    del self.preloaded_ai_results[key]
+                    logger.info(f"Cleaned up preloaded AI (size limit) for {key}")
+            
+            # Then clean up stale entries (keep only next 5 persons)
             valid_indices = set(range(index, min(index + 6, len(self.original_data))))
             # Build set of valid person keys
             valid_keys = set()
@@ -2768,7 +2783,15 @@ class DialerGUI:
             
             wb.save(self.output_excel_file)
         except Exception as e:
-            print(f"Error saving to Excel: {e}")
+            logger.error(f"Error saving to Excel: {e}")
+    
+    def save_results_to_excel_async(self, results, callback=None):
+        """Save results to Excel in background thread to prevent UI freezing"""
+        def worker():
+            self.save_results_to_excel(results)
+            if callback:
+                self.root.after(0, callback)
+        threading.Thread(target=worker, daemon=True).start()
     
     def display_current_result(self):
         """Display current result - validates we're showing data for current person"""
@@ -3186,7 +3209,7 @@ class DialerGUI:
             wb.save(self.output_excel_file)
             self.excel_cache.update(original_phone, result)
         except Exception as e:
-            print(f"Error updating Excel: {e}")
+            logger.error(f"Error updating Excel: {e}")
     
     def show_cache_stats(self):
         """Show cache statistics dialog"""
@@ -3267,7 +3290,7 @@ class DialerGUI:
                 }
                 people.append(person)
         except Exception as e:
-            print(f"Error extracting people: {e}")
+            logger.error(f"Error extracting people: {e}")
             people = []
         
         total_phones = sum(len(p['phones']) for p in people)
@@ -3627,7 +3650,7 @@ class DialerGUI:
                 try:
                     html_frame.load_html(html_content)
                 except Exception as load_error:
-                    print(f"Error loading HTML: {load_error}")
+                    logger.error(f"Error loading HTML: {load_error}")
                     # Show error in the frame
                     error_html = f'''
                     <html><body style="font-family: Arial; padding: 20px;">
@@ -3639,7 +3662,7 @@ class DialerGUI:
                     '''
                     html_frame.load_html(error_html)
             except Exception as e:
-                print(f"Error creating HTML view: {e}")
+                logger.error(f"Error creating HTML view: {e}")
                 # Create fallback frame with error message
                 error_frame = tk.Frame(notebook, bg='white')
                 notebook.add(error_frame, text="Visual View")
@@ -3757,7 +3780,12 @@ class DialerGUI:
         def do_lookup():
             try:
                 # Always call API directly (bypass cache)
-                address_data = self.lead_processor.address_lookup(street, city, state, zip_code)
+                result = self.lead_processor.address_lookup(street, city, state, zip_code)
+                # Handle tuple return (address_data, correction_info)
+                if isinstance(result, tuple):
+                    address_data, _ = result
+                else:
+                    address_data = result
                 
                 # Get existing phone data from cache to preserve it
                 phone_data = {}
