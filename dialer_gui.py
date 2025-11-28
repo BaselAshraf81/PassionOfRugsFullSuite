@@ -23,6 +23,7 @@ import os
 import json
 import datetime
 import logging
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +165,15 @@ class DialerGUI:
         self.ai_results_lock = threading.Lock()
         self.ai_results_person_idx = None  # Track which person AI results belong to
         self.ai_correction_log = []
-        self.preloaded_ai_results = {}  # Store preloaded AI results by phone
+        # Store preloaded AI results by composite key (phone + name) to prevent cross-person contamination
+        self.preloaded_ai_results = {}  # Key: f"{phone}_{name}" -> AI results
         
         # Preloading queue to avoid duplicate requests
         self.preload_queue = set()  # Track which persons are being/have been preloaded
         self.preload_lock = threading.Lock()  # Lock for queue access
+        
+        # Standard view results tracking for validation
+        self.current_results_person_key = None  # Track which person current_results belong to
         
         # Call history
         self.call_history = []
@@ -1585,28 +1590,25 @@ class DialerGUI:
         
         # Clean up stale preloaded AI results (keep only next 5 persons)
         if hasattr(self, 'preloaded_ai_results'):
-            original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
             valid_indices = set(range(index, min(index + 6, len(self.original_data))))
-            stale_phones = []
+            # Build set of valid person keys
+            valid_keys = set()
+            for valid_idx in valid_indices:
+                if valid_idx < len(self.original_data):
+                    valid_person = self.original_data[valid_idx]
+                    valid_phone = self.lead_processor.clean_phone(valid_person.get('phone', ''))
+                    valid_name = valid_person.get('name', '').strip()
+                    valid_keys.add(f"{valid_phone}_{valid_name}")
             
-            for phone, data in list(self.preloaded_ai_results.items()):
-                # Check if this preloaded data is for a person we might visit
-                is_valid = False
-                for valid_idx in valid_indices:
-                    if valid_idx < len(self.original_data):
-                        valid_person = self.original_data[valid_idx]
-                        valid_phone = self.lead_processor.clean_phone(valid_person.get('phone', ''))
-                        if phone == valid_phone:
-                            is_valid = True
-                            break
-                
-                if not is_valid:
-                    stale_phones.append(phone)
+            stale_keys = []
+            for key in list(self.preloaded_ai_results.keys()):
+                if key not in valid_keys:
+                    stale_keys.append(key)
             
             # Remove stale entries
-            for phone in stale_phones:
-                del self.preloaded_ai_results[phone]
-                logger.info(f"Cleaned up stale preloaded AI for {phone}")
+            for key in stale_keys:
+                del self.preloaded_ai_results[key]
+                logger.info(f"Cleaned up stale preloaded AI for {key}")
         
         # Start preloading next person in background (with proper validation)
         self.start_preloading_next_person()
@@ -1641,12 +1643,17 @@ class DialerGUI:
         
         # Check permanent cache for raw API responses
         original_phone = self.lead_processor.clean_phone(person.get('phone', ''))
+        original_name = person.get('name', '').strip()
         
-        # Check if we have preloaded AI results for this person
+        # Create composite key for person identification (phone + name)
+        person_key = f"{original_phone}_{original_name}"
+        self.current_results_person_key = person_key  # Track for validation
+        
+        # Check if we have preloaded AI results for this person (using composite key)
         preloaded_ai = None
-        if hasattr(self, 'preloaded_ai_results') and original_phone in self.preloaded_ai_results:
-            preloaded_ai = self.preloaded_ai_results[original_phone]
-            del self.preloaded_ai_results[original_phone]  # Remove after use
+        if hasattr(self, 'preloaded_ai_results') and person_key in self.preloaded_ai_results:
+            preloaded_ai = self.preloaded_ai_results[person_key]
+            del self.preloaded_ai_results[person_key]  # Remove after use
             logger.info(f"Using preloaded AI analysis for {person.get('name', 'Unknown')}")
         
         # Try to load from permanent cache (raw API responses and AI analysis)
@@ -1684,22 +1691,26 @@ class DialerGUI:
                         if has_results:
                             # Priority: preloaded > cached > new analysis
                             if preloaded_ai:
-                                # Use preloaded AI (from background preloading) - atomic assignment
+                                # Use preloaded AI (from background preloading) - make a copy to avoid modifying original
+                                ai_copy = copy.deepcopy(preloaded_ai)
                                 # Update metadata to reflect current person
-                                if '_metadata' in preloaded_ai:
-                                    preloaded_ai['_metadata']['person_idx'] = index
+                                if '_metadata' in ai_copy:
+                                    ai_copy['_metadata']['person_idx'] = index
+                                    ai_copy['_metadata']['original_name'] = original_name
                                 with self.ai_results_lock:
-                                    self.ai_results = preloaded_ai
+                                    self.ai_results = ai_copy
                                     self.ai_results_person_idx = index
                                 self.show_ai_tab(self.ai_tab)
                                 self.update_status("Data loaded instantly (preloaded AI) - no wait time!", self.colors['success'])
                             elif cached_ai_analysis:
-                                # Use cached AI analysis - atomic assignment
+                                # Use cached AI analysis - make a copy to avoid modifying cached object
+                                ai_copy = copy.deepcopy(cached_ai_analysis)
                                 # Update metadata to reflect current person (cached data may have old person_idx)
-                                if '_metadata' in cached_ai_analysis:
-                                    cached_ai_analysis['_metadata']['person_idx'] = index
+                                if '_metadata' in ai_copy:
+                                    ai_copy['_metadata']['person_idx'] = index
+                                    ai_copy['_metadata']['original_name'] = original_name
                                 with self.ai_results_lock:
-                                    self.ai_results = cached_ai_analysis
+                                    self.ai_results = ai_copy
                                     self.ai_results_person_idx = index
                                 self.show_ai_tab(self.ai_tab)
                                 self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
@@ -1811,6 +1822,9 @@ class DialerGUI:
             # Process the data into results
             results = self.process_lookup_data(person, phone_data, address_data)
             
+            # Set person key for validation before assigning results
+            person_name = person.get('name', '').strip()
+            self.current_results_person_key = f"{original_phone}_{person_name}"
             self.current_results = results
             self.current_result_idx = 0
             self.current_phone_idx = 0
@@ -1839,14 +1853,18 @@ class DialerGUI:
                     if cached_ai_analysis:
                         # Atomic assignment with validation
                         person_idx = self.current_person_idx
+                        person_name = person.get('name', '').strip()
                         def update_cached_ai():
                             with self.ai_results_lock:
                                 # Validate we're still on the same person
                                 if self.current_person_idx == person_idx:
+                                    # Make a deep copy to avoid modifying cached object
+                                    ai_copy = copy.deepcopy(cached_ai_analysis)
                                     # Update metadata to reflect current person
-                                    if '_metadata' in cached_ai_analysis:
-                                        cached_ai_analysis['_metadata']['person_idx'] = person_idx
-                                    self.ai_results = cached_ai_analysis
+                                    if '_metadata' in ai_copy:
+                                        ai_copy['_metadata']['person_idx'] = person_idx
+                                        ai_copy['_metadata']['original_name'] = person_name
+                                    self.ai_results = ai_copy
                                     self.ai_results_person_idx = person_idx
                                     self.show_ai_tab(self.ai_tab)
                                     self.update_status("Data loaded from cache (including AI analysis) - no API cost", self.colors['success'])
@@ -2069,6 +2087,8 @@ class DialerGUI:
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
             results = self.process_lookup_data(original_person, phone_data, None)
+            # Set person key for validation
+            self.current_results_person_key = f"{original_phone}_{original_name}"
             self.current_results = results
         else:
             # Extract people from phone data
@@ -2173,6 +2193,8 @@ class DialerGUI:
         if not self.current_results or self.current_results[0].get('new_name') == 'NO RESULTS FOUND':
             # No existing results, create new ones
             results = self.process_lookup_data(original_person, None, address_data)
+            # Set person key for validation
+            self.current_results_person_key = f"{original_phone}_{original_name}"
             self.current_results = results
         else:
             # Extract people from address data
@@ -2462,11 +2484,13 @@ class DialerGUI:
                         logger.info(f"Using cached data for preloading {person.get('name', 'Unknown')}")
                         if self.settings.get('ai_enabled') and self.settings.get('ai_person_filtering', True):
                             if cached_ai_analysis:
-                                # AI analysis is also cached, store it for instant loading
+                                # AI analysis is also cached, store it for instant loading using composite key
                                 if not hasattr(self, 'preloaded_ai_results'):
                                     self.preloaded_ai_results = {}
-                                self.preloaded_ai_results[original_phone] = cached_ai_analysis
-                                logger.info(f"Using cached AI analysis for preloading {person.get('name', 'Unknown')}")
+                                original_name = person.get('name', '').strip()
+                                person_key = f"{original_phone}_{original_name}"
+                                self.preloaded_ai_results[person_key] = cached_ai_analysis
+                                logger.info(f"Using cached AI analysis for preloading {person.get('name', 'Unknown')} (key: {person_key})")
                             else:
                                 # Run AI analysis on cached data
                                 self.preload_ai_analysis(person, phone_data, address_data, original_phone)
@@ -2567,11 +2591,13 @@ class DialerGUI:
                         self.lead_processor.cache_manager.update_ai_analysis(original_phone, ai_results)
                         logger.info(f"Stored preloaded AI analysis in permanent cache for {person.get('name', 'Unknown')}")
                     
-                    # Also store in memory for instant access
+                    # Also store in memory for instant access using composite key (phone + name)
                     if not hasattr(self, 'preloaded_ai_results'):
                         self.preloaded_ai_results = {}
-                    self.preloaded_ai_results[original_phone] = ai_results
-                    logger.info(f"Preloaded AI analysis in memory for {person.get('name', 'Unknown')}")
+                    original_name = person.get('name', '').strip()
+                    person_key = f"{original_phone}_{original_name}"
+                    self.preloaded_ai_results[person_key] = ai_results
+                    logger.info(f"Preloaded AI analysis in memory for {person.get('name', 'Unknown')} (key: {person_key})")
                     
         except Exception as e:
             logger.error(f"Preload AI analysis error: {e}")
@@ -2700,28 +2726,37 @@ class DialerGUI:
             logger.warning(f"Invalid person index: {self.current_person_idx}")
             return
         
-        # CRITICAL: Validate current_results match current person (BOTH phone AND name)
+        # Get current person info for validation
+        current_person = self.original_data[self.current_person_idx]
+        current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
+        current_name = current_person.get('name', '').strip()
+        current_person_key = f"{current_phone}_{current_name}"
+        
+        # CRITICAL: Validate current_results match current person using composite key
         if self.current_results:
-            current_person = self.original_data[self.current_person_idx]
-            current_phone = self.lead_processor.clean_phone(current_person.get('phone', ''))
-            current_name = current_person.get('name', '').strip()
-            
             # Check if results match current person (using first result as reference)
             result_phone = self.current_results[0].get('original_phone', '')
             result_name = self.current_results[0].get('original_name', '').strip()
+            result_person_key = f"{result_phone}_{result_name}"
             
-            # Validate BOTH phone AND name
-            if result_phone != current_phone or result_name != current_name:
+            # Also check stored person key if available
+            stored_key_matches = (not hasattr(self, 'current_results_person_key') or 
+                                  self.current_results_person_key == current_person_key)
+            
+            # Validate BOTH phone AND name using composite key
+            if result_person_key != current_person_key or not stored_key_matches:
                 logger.warning(f"Standard View results mismatch:")
-                logger.warning(f"  Result: {result_name} ({result_phone})")
-                logger.warning(f"  Current: {current_name} ({current_phone})")
+                logger.warning(f"  Result key: {result_person_key}")
+                logger.warning(f"  Current key: {current_person_key}")
+                logger.warning(f"  Stored key: {getattr(self, 'current_results_person_key', 'N/A')}")
                 logger.warning(f"Clearing mismatched results for person {self.current_person_idx}")
                 # Clear mismatched results
                 self.current_results = []
                 self.current_result_idx = 0
                 self.current_phone_idx = 0
+                self.current_results_person_key = None
             else:
-                logger.debug(f"Standard View results validated for person {self.current_person_idx} ({current_name}, {current_phone})")
+                logger.debug(f"Standard View results validated for person {self.current_person_idx} (key: {current_person_key})")
         
         if not self.current_results:
             self.result_counter_label.config(text="No results found")
